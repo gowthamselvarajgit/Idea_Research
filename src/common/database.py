@@ -24,59 +24,88 @@ CREATE TABLE IF NOT EXISTS research_runs (
     completed_at TIMESTAMP
 );
 
--- Patents: stores patent records associated with research runs
+-- Patents: stores canonical patent records (globally unique by patent_number)
 CREATE TABLE IF NOT EXISTS patents (
     id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL,
-    patent_number TEXT NOT NULL,
+    patent_number TEXT NOT NULL UNIQUE,
     title TEXT,
     abstract TEXT,
     filing_date TEXT,
     publication_date TEXT,
     assignee TEXT,
+    source_url TEXT,
     raw_data TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Extracted Problems: stores technical problems and bottlenecks derived from patents
+-- Run-Patents Junction: associates patents with the research runs that discovered/analyzed them
+CREATE TABLE IF NOT EXISTS run_patents (
+    run_id TEXT NOT NULL,
+    patent_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (run_id, patent_id),
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (patent_id) REFERENCES patents(id) ON DELETE CASCADE
+);
+
+-- Extracted Problems: stores technical problems and bottlenecks identified during a research run
 CREATE TABLE IF NOT EXISTS extracted_problems (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
-    patent_id TEXT,
     problem_title TEXT NOT NULL,
     problem_description TEXT,
     bottleneck_type TEXT,
     technical_domain TEXT,
     raw_data TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE,
-    FOREIGN KEY (patent_id) REFERENCES patents(id) ON DELETE SET NULL
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE
 );
 
--- Startup Opportunities: stores venture opportunities synthesized from problems
+-- Problem-Patents Junction: allows a problem to be synthesized from multiple patents (M:N)
+CREATE TABLE IF NOT EXISTS problem_patents (
+    problem_id TEXT NOT NULL,
+    patent_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (problem_id, patent_id),
+    FOREIGN KEY (problem_id) REFERENCES extracted_problems(id) ON DELETE CASCADE,
+    FOREIGN KEY (patent_id) REFERENCES patents(id) ON DELETE CASCADE
+);
+
+-- Startup Opportunities: stores venture opportunities synthesized during a research run
 CREATE TABLE IF NOT EXISTS startup_opportunities (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
-    problem_id TEXT,
     opportunity_title TEXT NOT NULL,
     solution_concept TEXT,
     target_customer TEXT,
     value_proposition TEXT,
     raw_data TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE,
-    FOREIGN KEY (problem_id) REFERENCES extracted_problems(id) ON DELETE SET NULL
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE
 );
 
--- Indexes for efficient queries across multiple research runs
-CREATE INDEX IF NOT EXISTS idx_patents_run_id ON patents(run_id);
+-- Opportunity-Problems Junction: allows an opportunity to reference multiple problems (M:N)
+CREATE TABLE IF NOT EXISTS opportunity_problems (
+    opportunity_id TEXT NOT NULL,
+    problem_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (opportunity_id, problem_id),
+    FOREIGN KEY (opportunity_id) REFERENCES startup_opportunities(id) ON DELETE CASCADE,
+    FOREIGN KEY (problem_id) REFERENCES extracted_problems(id) ON DELETE CASCADE
+);
+
+-- Indexes for efficient queries across runs, patents, problems, and opportunities
 CREATE INDEX IF NOT EXISTS idx_patents_patent_number ON patents(patent_number);
-CREATE INDEX IF NOT EXISTS idx_problems_run_id ON extracted_problems(run_id);
-CREATE INDEX IF NOT EXISTS idx_problems_patent_id ON extracted_problems(patent_id);
-CREATE INDEX IF NOT EXISTS idx_opportunities_run_id ON startup_opportunities(run_id);
-CREATE INDEX IF NOT EXISTS idx_opportunities_problem_id ON startup_opportunities(problem_id);
+CREATE INDEX IF NOT EXISTS idx_run_patents_run_id ON run_patents(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_patents_patent_id ON run_patents(patent_id);
+CREATE INDEX IF NOT EXISTS idx_extracted_problems_run_id ON extracted_problems(run_id);
+CREATE INDEX IF NOT EXISTS idx_problem_patents_problem_id ON problem_patents(problem_id);
+CREATE INDEX IF NOT EXISTS idx_problem_patents_patent_id ON problem_patents(patent_id);
+CREATE INDEX IF NOT EXISTS idx_startup_opportunities_run_id ON startup_opportunities(run_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_problems_opp_id ON opportunity_problems(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_problems_prob_id ON opportunity_problems(problem_id);
 """
+
 
 
 def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
