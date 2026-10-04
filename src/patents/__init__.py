@@ -30,6 +30,7 @@ from src.patents.models import (
     validate_patent_number,
 )
 
+from src.patents.repository import PatentRepository
 from src.patents.uspto_client import (
     USPTOClient,
     USPTOClientError,
@@ -59,6 +60,7 @@ __all__ = [
     "EPOResponseError",
     "PatentClientError",
     "PatentRecord",
+    "PatentRepository",
     "USPTOClient",
     "USPTOClientError",
     "USPTOHTTPError",
