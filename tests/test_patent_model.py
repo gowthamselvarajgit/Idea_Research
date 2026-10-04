@@ -4,7 +4,10 @@ from dataclasses import FrozenInstanceError
 import unittest
 
 from src.patents.models import (
+    IndianPatentRecord,
+    InPassPatentRecord,
     PatentRecord,
+    PersonOrOrganization,
     build_canonical_url,
     clean_patent_string,
     is_valid_patent_number,
@@ -180,6 +183,190 @@ class TestPatentModelAndNormalization(unittest.TestCase):
                 assignee=None,
                 source_url="",
             )
+
+    def test_person_or_organization_model(self):
+        """Verify PersonOrOrganization fields, validation, and immutability."""
+        person = PersonOrOrganization(
+            name="Dr. Jane Smith",
+            address="123 Science Park, Bangalore",
+            country="India",
+            nationality="Indian",
+        )
+        self.assertEqual(person.name, "Dr. Jane Smith")
+        self.assertEqual(person.address, "123 Science Park, Bangalore")
+        self.assertEqual(person.country, "India")
+        self.assertEqual(person.nationality, "Indian")
+
+        # Immutability
+        with self.assertRaises(FrozenInstanceError):
+            person.name = "Dr. John Smith"  # type: ignore
+
+        # Validation: empty name rejected
+        with self.assertRaises(ValueError):
+            PersonOrOrganization(name="")
+
+        # Defaults for optional fields
+        org = PersonOrOrganization(name="Innovation Labs Ltd")
+        self.assertEqual(org.address, "")
+        self.assertEqual(org.country, "")
+        self.assertEqual(org.nationality, "")
+
+    def test_inpass_patent_record_all_metadata_fields(self):
+        """Verify all InPASS patent metadata fields are represented correctly."""
+        applicant = PersonOrOrganization(
+            name="Vellore Institute of Technology",
+            address="Katpadi, Vellore - 632014, Tamil Nadu",
+            country="India",
+            nationality="Indian",
+        )
+        inventor = PersonOrOrganization(
+            name="Dr. S. Ramesh",
+            address="School of Advanced Sciences, VIT, Vellore",
+            country="India",
+            nationality="Indian",
+        )
+
+        record = InPassPatentRecord(
+            application_number="202641109752",
+            publication_number="38/2026",
+            publication_date="18/09/2026",
+            filing_date="12/09/2026",
+            title="A SYSTEM AND METHOD FOR INLINE DUAL-WAVELENGTH OPTICAL DETECTION OF MICROPLASTICS IN FLOWING WATER",
+            ipc="G01N 21/47, G01N 21/21, G01N 21/49, G01N 21/51, G01N 33/18",
+            abstract="A dual-wavelength optical detection system for microplastics in water streams.",
+            specification="Detailed specification of the optical detector array and flow channel.",
+            claims="1. An optical detection apparatus comprising: a laser source, a detector...",
+            applicants=[applicant],
+            inventors=[inventor],
+            source="INPASS",
+            source_url="https://iprsearch.ipindia.gov.in/publicsearch?app=202641109752",
+            raw_data={"test_key": "test_val"},
+        )
+
+        # Check all 13 core fields
+        self.assertEqual(record.application_number, "202641109752")
+        self.assertEqual(record.publication_number, "38/2026")
+        self.assertEqual(record.publication_date, "18/09/2026")
+        self.assertEqual(record.filing_date, "12/09/2026")
+        self.assertEqual(
+            record.title,
+            "A SYSTEM AND METHOD FOR INLINE DUAL-WAVELENGTH OPTICAL DETECTION OF MICROPLASTICS IN FLOWING WATER",
+        )
+        self.assertEqual(record.ipc, "G01N 21/47, G01N 21/21, G01N 21/49, G01N 21/51, G01N 33/18")
+        self.assertEqual(record.abstract, "A dual-wavelength optical detection system for microplastics in water streams.")
+        self.assertEqual(record.specification, "Detailed specification of the optical detector array and flow channel.")
+        self.assertEqual(record.claims, "1. An optical detection apparatus comprising: a laser source, a detector...")
+        self.assertEqual(len(record.applicants), 1)
+        self.assertEqual(record.applicants[0], applicant)
+        self.assertEqual(len(record.inventors), 1)
+        self.assertEqual(record.inventors[0], inventor)
+        self.assertEqual(record.source, "INPASS")
+        self.assertEqual(record.source_url, "https://iprsearch.ipindia.gov.in/publicsearch?app=202641109752")
+        self.assertEqual(record.raw_data, {"test_key": "test_val"})
+
+        # Backward compatibility properties
+        self.assertEqual(record.patent_number, "38/2026")
+        self.assertEqual(record.assignee, "Vellore Institute of Technology")
+
+        # Immutability
+        with self.assertRaises(FrozenInstanceError):
+            record.title = "New Title"  # type: ignore
+
+    def test_inpass_patent_record_multiple_applicants_and_inventors(self):
+        """Verify an InPASS patent record can contain multiple structured applicants and inventors."""
+        applicants = [
+            PersonOrOrganization(
+                name="Indian Institute of Technology Madras",
+                address="IIT P.O., Chennai - 600036",
+                country="India",
+                nationality="Indian",
+            ),
+            PersonOrOrganization(
+                name="Tech Innovations Pvt Ltd",
+                address="Whitefield, Bangalore - 560066",
+                country="India",
+                nationality="Indian",
+            ),
+        ]
+
+        inventors = [
+            PersonOrOrganization(
+                name="Prof. Rajesh Kumar",
+                address="Department of Mechanical Engineering, IIT Madras",
+                country="India",
+                nationality="Indian",
+            ),
+            PersonOrOrganization(
+                name="Dr. Ananya Sharma",
+                address="Center for Water Research, IIT Madras",
+                country="India",
+                nationality="Indian",
+            ),
+            PersonOrOrganization(
+                name="Karthik Subramanian",
+                address="Tech Innovations Pvt Ltd, Bangalore",
+                country="India",
+                nationality="Indian",
+            ),
+        ]
+
+        record = IndianPatentRecord(
+            application_number="202641109752",
+            title="Multispectral Water Sensor",
+            applicants=applicants,
+            inventors=inventors,
+        )
+
+        # Multiple applicants verified
+        self.assertEqual(len(record.applicants), 2)
+        self.assertEqual(record.applicants[0].name, "Indian Institute of Technology Madras")
+        self.assertEqual(record.applicants[1].name, "Tech Innovations Pvt Ltd")
+        self.assertEqual(record.assignee, "Indian Institute of Technology Madras")
+
+        # Multiple inventors verified
+        self.assertEqual(len(record.inventors), 3)
+        self.assertEqual(record.inventors[0].name, "Prof. Rajesh Kumar")
+        self.assertEqual(record.inventors[1].name, "Dr. Ananya Sharma")
+        self.assertEqual(record.inventors[2].name, "Karthik Subramanian")
+
+        # Verify each applicant and inventor retains structured address, country, nationality
+        for app in record.applicants:
+            self.assertTrue(app.name)
+            self.assertEqual(app.country, "India")
+            self.assertEqual(app.nationality, "Indian")
+
+        for inv in record.inventors:
+            self.assertTrue(inv.name)
+            self.assertEqual(inv.country, "India")
+            self.assertEqual(inv.nationality, "Indian")
+
+        # Verify to_dict serializes structured entities
+        data = record.to_dict()
+        self.assertEqual(len(data["applicants"]), 2)
+        self.assertEqual(len(data["inventors"]), 3)
+        self.assertEqual(data["applicants"][0]["name"], "Indian Institute of Technology Madras")
+        self.assertEqual(data["inventors"][0]["name"], "Prof. Rajesh Kumar")
+
+    def test_inpass_patent_record_validation(self):
+        """Verify InPassPatentRecord input validation."""
+        # Empty application number must raise ValueError
+        with self.assertRaises(ValueError):
+            InPassPatentRecord(application_number="")
+
+        # Invalid applicant item type must raise TypeError
+        with self.assertRaises(TypeError):
+            InPassPatentRecord(
+                application_number="202641109752",
+                applicants=[123],  # type: ignore
+            )
+
+        # Invalid raw_data type must raise TypeError
+        with self.assertRaises(TypeError):
+            InPassPatentRecord(
+                application_number="202641109752",
+                raw_data="not-a-dict",  # type: ignore
+            )
+
 
 
 if __name__ == "__main__":

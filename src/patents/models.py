@@ -6,7 +6,7 @@ sanitizing, validating, and formatting publication-level patent numbers.
 
 from dataclasses import dataclass, field
 import re
-from typing import Optional
+from typing import Any, Optional, Sequence, Union
 
 # Canonical pattern: [2 uppercase letters][document number starting with digit or US prefix][kind code starting with a letter]
 PATENT_NUMBER_PATTERN = re.compile(
@@ -157,3 +157,141 @@ class PatentRecord:
         validate_patent_number(self.patent_number)
         if not self.source_url:
             object.__setattr__(self, "source_url", build_canonical_url(self.patent_number))
+
+
+@dataclass(frozen=True)
+class PersonOrOrganization:
+    """Reusable entity representing a person or organization associated with a patent."""
+
+    name: str
+    address: str = ""
+    country: str = ""
+    nationality: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate field constraints and ensure immutability."""
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name must be a non-empty string.")
+        if self.address is None:
+            object.__setattr__(self, "address", "")
+        if self.country is None:
+            object.__setattr__(self, "country", "")
+        if self.nationality is None:
+            object.__setattr__(self, "nationality", "")
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialize entity to a standard dictionary."""
+        return {
+            "name": self.name,
+            "address": self.address,
+            "country": self.country,
+            "nationality": self.nationality,
+        }
+
+
+@dataclass(frozen=True)
+class InPassPatentRecord:
+    """Immutable data model representing a verified Indian InPASS patent record."""
+
+    application_number: str
+    publication_number: Optional[str] = None
+    publication_date: Optional[str] = None
+    filing_date: Optional[str] = None
+    title: str = ""
+    ipc: Optional[str] = None
+    abstract: Optional[str] = None
+    specification: Optional[str] = None
+    claims: Optional[str] = None
+    applicants: Sequence[PersonOrOrganization] = field(default_factory=tuple)
+    inventors: Sequence[PersonOrOrganization] = field(default_factory=tuple)
+    source: str = "INPASS"
+    source_url: str = ""
+    raw_data: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate and normalize record fields upon initialization."""
+        if not isinstance(self.application_number, str) or not self.application_number.strip():
+            raise ValueError("application_number must be a non-empty string.")
+
+        # Process and normalize applicants into immutable tuple
+        raw_apps = self.applicants if self.applicants is not None else ()
+        if not isinstance(raw_apps, (list, tuple)):
+            raise TypeError(
+                f"applicants must be a list or tuple of PersonOrOrganization, got {type(raw_apps).__name__}"
+            )
+        clean_apps = []
+        for app in raw_apps:
+            if isinstance(app, PersonOrOrganization):
+                clean_apps.append(app)
+            elif isinstance(app, dict):
+                clean_apps.append(PersonOrOrganization(**app))
+            else:
+                raise TypeError(f"Applicant item must be PersonOrOrganization or dict, got {type(app).__name__}")
+        object.__setattr__(self, "applicants", tuple(clean_apps))
+
+        # Process and normalize inventors into immutable tuple
+        raw_invs = self.inventors if self.inventors is not None else ()
+        if not isinstance(raw_invs, (list, tuple)):
+            raise TypeError(
+                f"inventors must be a list or tuple of PersonOrOrganization, got {type(raw_invs).__name__}"
+            )
+        clean_invs = []
+        for inv in raw_invs:
+            if isinstance(inv, PersonOrOrganization):
+                clean_invs.append(inv)
+            elif isinstance(inv, dict):
+                clean_invs.append(PersonOrOrganization(**inv))
+            else:
+                raise TypeError(f"Inventor item must be PersonOrOrganization or dict, got {type(inv).__name__}")
+        object.__setattr__(self, "inventors", tuple(clean_invs))
+
+        # Default source to INPASS if unset
+        if not self.source:
+            object.__setattr__(self, "source", "INPASS")
+
+        # Deterministic fallback URL if unset
+        if not self.source_url:
+            clean_app_num = self.application_number.strip()
+            object.__setattr__(
+                self,
+                "source_url",
+                f"https://iprsearch.ipindia.gov.in/publicsearch?app={clean_app_num}",
+            )
+
+        if not isinstance(self.raw_data, dict):
+            raise TypeError("raw_data must be a dictionary.")
+
+    @property
+    def patent_number(self) -> str:
+        """Alias publication or application identifier for cross-system compatibility."""
+        return self.publication_number or self.application_number
+
+    @property
+    def assignee(self) -> Optional[str]:
+        """Convenience property returning primary applicant name."""
+        return self.applicants[0].name if self.applicants else None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize InPassPatentRecord to a standard dictionary."""
+        return {
+            "application_number": self.application_number,
+            "publication_number": self.publication_number,
+            "publication_date": self.publication_date,
+            "filing_date": self.filing_date,
+            "title": self.title,
+            "ipc": self.ipc,
+            "abstract": self.abstract,
+            "specification": self.specification,
+            "claims": self.claims,
+            "applicants": [app.to_dict() for app in self.applicants],
+            "inventors": [inv.to_dict() for inv in self.inventors],
+            "source": self.source,
+            "source_url": self.source_url,
+            "raw_data": self.raw_data,
+        }
+
+
+# Alias for regional naming preference
+IndianPatentRecord = InPassPatentRecord
+
+
