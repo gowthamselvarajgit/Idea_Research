@@ -94,7 +94,31 @@ CREATE TABLE IF NOT EXISTS opportunity_problems (
     FOREIGN KEY (problem_id) REFERENCES extracted_problems(id) ON DELETE CASCADE
 );
 
--- Indexes for efficient queries across runs, patents, problems, and opportunities
+-- Opportunity Evaluations: stores multi-dimensional venture scoring and recommendations
+CREATE TABLE IF NOT EXISTS opportunity_evaluations (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL,
+    overall_score INTEGER NOT NULL,
+    problem_severity_score INTEGER NOT NULL,
+    frequency_score INTEGER NOT NULL,
+    user_scale_score INTEGER NOT NULL,
+    willingness_to_pay_score INTEGER NOT NULL,
+    market_gap_score INTEGER NOT NULL,
+    technology_leverage_score INTEGER NOT NULL,
+    competition_score INTEGER NOT NULL,
+    wow_factor_score INTEGER NOT NULL,
+    recurring_potential_score INTEGER NOT NULL,
+    social_impact_score INTEGER NOT NULL,
+    execution_feasibility_score INTEGER NOT NULL,
+    rejection_reasons TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    raw_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (opportunity_id) REFERENCES startup_opportunities(id) ON DELETE CASCADE
+);
+
+-- Indexes for efficient queries across runs, patents, problems, opportunities, and evaluations
 CREATE INDEX IF NOT EXISTS idx_patents_patent_number ON patents(patent_number);
 CREATE INDEX IF NOT EXISTS idx_run_patents_run_id ON run_patents(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_patents_patent_id ON run_patents(patent_id);
@@ -104,6 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_problem_patents_patent_id ON problem_patents(pate
 CREATE INDEX IF NOT EXISTS idx_startup_opportunities_run_id ON startup_opportunities(run_id);
 CREATE INDEX IF NOT EXISTS idx_opportunity_problems_opp_id ON opportunity_problems(opportunity_id);
 CREATE INDEX IF NOT EXISTS idx_opportunity_problems_prob_id ON opportunity_problems(problem_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_evaluations_opp_id ON opportunity_evaluations(opportunity_id);
 """
 
 
