@@ -74,6 +74,7 @@ class TestProblemExtractionService(unittest.TestCase):
         self.mock_ai_client.generate.return_value = self.valid_ai_json
         self.mock_patent_reader.get_patents_for_run.return_value = [self.sample_patent]
         self.mock_repository.save_problem.return_value = "prob-uuid-1234"
+        self.mock_repository.get_problem_for_run_and_patent.return_value = None
 
         self.service = ProblemExtractionService(
             ai_client=self.mock_ai_client,
@@ -96,6 +97,7 @@ class TestProblemExtractionService(unittest.TestCase):
         self.assertEqual(result.problem_severity, "high")
         self.assertEqual(result.evidence_confidence, "high")
         self.assertEqual(result.source_patent_numbers, ("US11223344B2",))
+        self.assertEqual(result.id, "prob-uuid-1234")
 
     def test_correct_patent_input_passed_to_prompt_builder(self) -> None:
         """Verify correct patent input dictionary is passed into the prompt builder."""
@@ -149,13 +151,15 @@ class TestProblemExtractionService(unittest.TestCase):
             )
 
     def test_repository_receives_parsed_problem_record_and_run_id(self) -> None:
-        """Verify that the repository receives the exact ProblemRecord and run ID."""
+        """Verify that the repository receives the parsed ProblemRecord and returns record with ID."""
         result = self.service.extract_problem_for_patent("run-xyz", "US11223344B2")
 
-        self.mock_repository.save_problem.assert_called_once_with(
-            problem=result,
-            run_id="run-xyz",
-        )
+        call_args = self.mock_repository.save_problem.call_args
+        self.assertIsNotNone(call_args)
+        saved_problem = call_args[1]["problem"]
+        self.assertIsNone(saved_problem.id)  # before save, id was None
+        self.assertEqual(call_args[1]["run_id"], "run-xyz")
+        self.assertEqual(result.id, "prob-uuid-1234")  # after save, id is populated
 
     def test_patent_not_belonging_to_run(self) -> None:
         """Verify that PatentNotInRunError is raised when patent is not in the research run."""
@@ -433,7 +437,102 @@ class TestProblemExtractionService(unittest.TestCase):
                 with self.assertRaises(ProblemExtractionServiceError):
                     self.service.extract_problems_for_run(run_id=invalid)
 
-        self.mock_patent_reader.get_patents_for_run.assert_not_called()
+    def test_extract_problem_idempotency_skips_ai(self) -> None:
+        """Verify that extracting an already-extracted patent returns the existing record without calling AI."""
+        run_id = "run-001"
+        patent_id = "US11223344B2"
+
+        existing_problem = ProblemRecord(
+            problem_title="Already Extracted Problem",
+            problem_description="Existing problem description.",
+            affected_users="Battery Engineers",
+            bottleneck_type="Thermal Degradation",
+            technical_domain="Energy Storage",
+            current_workaround="Liquid cooling",
+            problem_frequency="daily",
+            problem_severity="high",
+            evidence_summary="Extracted previously.",
+            evidence_confidence="high",
+            source_patent_numbers=("US11223344B2",),
+        )
+
+        # Repository indicates this problem was already extracted
+        self.mock_repository.get_problem_for_run_and_patent.return_value = existing_problem
+
+        result = self.service.extract_problem_for_patent(run_id=run_id, patent_id=patent_id)
+
+        # 1. Existing record returned
+        self.assertEqual(result, existing_problem)
+
+        # 2. AI client was NOT called
+        self.mock_ai_client.generate.assert_not_called()
+
+        # 3. Repository save was NOT called
+        self.mock_repository.save_problem.assert_not_called()
+
+        # 4. Lookup was performed with correct run_id and patent number
+        self.mock_repository.get_problem_for_run_and_patent.assert_called_once_with(
+            run_id=run_id,
+            patent_id_or_number=patent_id,
+        )
+
+    def test_extract_problems_for_run_different_patents_create_separate_problems(self) -> None:
+        """Verify that different patents in the same run create separate problems."""
+        patent1 = PatentRecord(
+            patent_number="IN202641114086A",
+            title="Pollution Monitoring Robot",
+            abstract="ESP32 based monitoring robot.",
+            filing_date="2024-01-10",
+            publication_date="2024-06-20",
+            assignee="Tech University",
+            source_url="https://ipindiaservices.gov.in/test1",
+        )
+        patent2 = PatentRecord(
+            patent_number="IN202641114195A",
+            title="Swarm Agriculture Monitoring System",
+            abstract="Swarm based monitoring system.",
+            filing_date="2024-02-15",
+            publication_date="2024-07-15",
+            assignee="AgriTech Labs",
+            source_url="https://ipindiaservices.gov.in/test2",
+        )
+        self.mock_patent_reader.get_patents_for_run.return_value = [patent1, patent2]
+        # No existing problems
+        self.mock_repository.get_problem_for_run_and_patent.return_value = None
+
+    def test_batch_extraction_idempotency_second_run_skips_ai(self) -> None:
+        """Verify that running extract_problems_for_run twice does not call AI on the second run."""
+        patent1 = PatentRecord(
+            patent_number="IN202641114086A",
+            title="Pollution Monitoring Robot",
+            abstract="ESP32 based monitoring robot.",
+            filing_date="2024-01-10",
+            publication_date="2024-06-20",
+            assignee="Tech University",
+            source_url="https://ipindiaservices.gov.in/test1",
+        )
+        self.mock_patent_reader.get_patents_for_run.return_value = [patent1]
+
+        # First run: no existing problem -> AI generates and repository saves
+        self.mock_repository.get_problem_for_run_and_patent.return_value = None
+        results1 = self.service.extract_problems_for_run("run-batch-idempotency")
+        self.assertEqual(len(results1), 1)
+        self.assertEqual(self.mock_ai_client.generate.call_count, 1)
+        self.assertEqual(self.mock_repository.save_problem.call_count, 1)
+
+        # Second run: problem now exists in repository
+        first_problem = results1[0]
+        self.mock_repository.get_problem_for_run_and_patent.return_value = first_problem
+        self.mock_ai_client.generate.reset_mock()
+        self.mock_repository.save_problem.reset_mock()
+
+        results2 = self.service.extract_problems_for_run("run-batch-idempotency")
+        self.assertEqual(len(results2), 1)
+        self.assertEqual(results2[0], first_problem)
+        # AI was not called
+        self.mock_ai_client.generate.assert_not_called()
+        # Save was not called
+        self.mock_repository.save_problem.assert_not_called()
 
 
 if __name__ == "__main__":

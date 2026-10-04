@@ -3,6 +3,7 @@
 import json
 import logging
 import subprocess
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ class AntigravityAIClient:
         model: str = "gemini-3.8-flash-low",
         executable: str = "agy",
         timeout_seconds: int = 120,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 2.0,
     ) -> None:
         """Initialize the client.
 
@@ -71,6 +74,8 @@ class AntigravityAIClient:
             model: Model identifier supported by agy (default: gemini-3.8-flash-low).
             executable: CLI executable command or path (default: agy).
             timeout_seconds: Subprocess execution timeout in seconds (default: 120).
+            max_retries: Additional retry attempts on transient process failure (default: 2).
+            retry_backoff_seconds: Base backoff sleep time in seconds between retries (default: 2.0).
 
         Raises:
             AIClientInputError: If configuration arguments are invalid.
@@ -81,13 +86,21 @@ class AntigravityAIClient:
             raise AIClientInputError("executable must be a non-empty string.")
         if timeout_seconds <= 0:
             raise AIClientInputError("timeout_seconds must be a positive integer.")
+        if max_retries < 0:
+            raise AIClientInputError("max_retries must be a non-negative integer.")
+        if retry_backoff_seconds < 0:
+            raise AIClientInputError("retry_backoff_seconds must be non-negative.")
 
         self.model = model.strip()
         self.executable = executable.strip()
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         """Invoke the AI model via the Antigravity CLI and return generated text.
+
+        Retries on transient subprocess failures (timeouts and non-zero process exits).
 
         Args:
             system_prompt: Non-empty system instructions string.
@@ -99,8 +112,8 @@ class AntigravityAIClient:
         Raises:
             AIClientInputError: If prompts are invalid.
             AIClientExecutableError: If the CLI executable is missing.
-            AIClientTimeoutError: If execution exceeds timeout.
-            AIClientProcessError: If process exits with non-zero return code.
+            AIClientTimeoutError: If execution exceeds timeout across all attempts.
+            AIClientProcessError: If process exits with non-zero return code across all attempts.
             AIClientResponseError: If JSON or response payload is invalid.
         """
         if not isinstance(system_prompt, str) or not system_prompt.strip():
@@ -120,60 +133,90 @@ class AntigravityAIClient:
             "json",
         ]
 
-        logger.debug("Executing AI command: %s (model=%s)", self.executable, self.model)
+        total_attempts = 1 + self.max_retries
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=self.timeout_seconds,
-                check=False,
-            )
-        except FileNotFoundError as err:
-            raise AIClientExecutableError(
-                f"AI CLI executable '{self.executable}' not found on system PATH."
-            ) from err
-        except subprocess.TimeoutExpired as err:
-            raise AIClientTimeoutError(
-                f"AI process execution timed out after {self.timeout_seconds} seconds."
-            ) from err
-        except Exception as err:
-            raise AIClientError(f"Unexpected error executing AI process: {err}") from err
-
-        if proc.returncode != 0:
-            stderr_clean = proc.stderr.strip() if proc.stderr else ""
-            raise AIClientProcessError(
-                f"AI process exited with code {proc.returncode}. Stderr: {stderr_clean}"
+        for attempt in range(1, total_attempts + 1):
+            logger.debug(
+                "Executing AI command (attempt %d/%d): %s (model=%s)",
+                attempt,
+                total_attempts,
+                self.executable,
+                self.model,
             )
 
-        # Parse output wrapper
-        try:
-            payload = json.loads(proc.stdout)
-        except (json.JSONDecodeError, UnicodeDecodeError) as err:
-            raise AIClientResponseError(
-                f"Failed to parse AI CLI stdout as JSON: {err}"
-            ) from err
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=self.timeout_seconds,
+                    check=False,
+                )
+            except FileNotFoundError as err:
+                # Missing executable is non-retryable
+                raise AIClientExecutableError(
+                    f"AI CLI executable '{self.executable}' not found on system PATH."
+                ) from err
+            except subprocess.TimeoutExpired as err:
+                if attempt < total_attempts:
+                    logger.warning(
+                        "AI process timed out on attempt %d/%d. Retrying in %.1fs...",
+                        attempt,
+                        total_attempts,
+                        self.retry_backoff_seconds,
+                    )
+                    time.sleep(self.retry_backoff_seconds)
+                    continue
+                raise AIClientTimeoutError(
+                    f"AI process execution timed out after {self.timeout_seconds} seconds."
+                ) from err
+            except Exception as err:
+                raise AIClientError(f"Unexpected error executing AI process: {err}") from err
 
-        if not isinstance(payload, dict):
-            raise AIClientResponseError(
-                f"Expected JSON object from AI CLI, got {type(payload).__name__}."
-            )
+            if proc.returncode != 0:
+                stderr_clean = proc.stderr.strip() if proc.stderr else ""
+                if attempt < total_attempts:
+                    logger.warning(
+                        "AI process exited with code %d on attempt %d/%d (stderr: %s). Retrying in %.1fs...",
+                        proc.returncode,
+                        attempt,
+                        total_attempts,
+                        stderr_clean,
+                        self.retry_backoff_seconds,
+                    )
+                    time.sleep(self.retry_backoff_seconds)
+                    continue
+                raise AIClientProcessError(
+                    f"AI process exited with code {proc.returncode}. Stderr: {stderr_clean}"
+                )
 
-        status = payload.get("status")
-        if status != "SUCCESS":
-            raise AIClientResponseError(
-                f"AI CLI returned non-success status: '{status}'."
-            )
+            # Successfully completed subprocess: parse output wrapper (non-retryable on output structure)
+            try:
+                payload = json.loads(proc.stdout)
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                raise AIClientResponseError(
+                    f"Failed to parse AI CLI stdout as JSON: {err}"
+                ) from err
 
-        response = payload.get("response")
-        if response is None:
-            raise AIClientResponseError("AI CLI JSON output missing 'response' field.")
+            if not isinstance(payload, dict):
+                raise AIClientResponseError(
+                    f"Expected JSON object from AI CLI, got {type(payload).__name__}."
+                )
 
-        if not isinstance(response, str):
-            raise AIClientResponseError(
-                f"AI CLI 'response' field must be a string, got {type(response).__name__}."
-            )
+            status = payload.get("status")
+            if status != "SUCCESS":
+                raise AIClientResponseError(
+                    f"AI CLI returned non-success status: '{status}'."
+                )
 
-        return response
+            response = payload.get("response")
+            if response is None:
+                raise AIClientResponseError("AI CLI JSON output missing 'response' field.")
+
+            if not isinstance(response, str):
+                raise AIClientResponseError(
+                    f"AI CLI 'response' field must be a string, got {type(response).__name__}."
+                )
+
+            return response

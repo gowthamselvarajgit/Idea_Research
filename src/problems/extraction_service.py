@@ -1,5 +1,4 @@
-"""Application service for extracting and persisting problems from patents."""
-
+from dataclasses import replace
 import logging
 from typing import Any, Optional
 
@@ -90,6 +89,29 @@ class ProblemExtractionService:
             ProblemExtractionAIError: If AI generation fails.
             ProblemExtractionPersistenceError: If repository persistence fails.
         """
+        # 0. Check for existing problem for this run and patent (idempotency check)
+        pat_ident = getattr(target_patent, "patent_number", None) or getattr(target_patent, "id", None)
+        if pat_ident and hasattr(self.repository, "get_problem_for_run_and_patent"):
+            try:
+                existing = self.repository.get_problem_for_run_and_patent(
+                    run_id=run_id,
+                    patent_id_or_number=str(pat_ident),
+                )
+                if existing:
+                    logger.info(
+                        "Problem already extracted for patent '%s' in run '%s'. Skipping AI extraction.",
+                        pat_ident,
+                        run_id,
+                    )
+                    return existing
+            except Exception as exc:
+                logger.warning(
+                    "Failed to check existing problem for patent '%s' in run '%s': %s",
+                    pat_ident,
+                    run_id,
+                    exc,
+                )
+
         # 1. Convert PatentRecord using build_patent_extraction_input
         try:
             extraction_input = build_patent_extraction_input(target_patent)
@@ -133,13 +155,15 @@ class ProblemExtractionService:
 
         # 6. Persist the resulting ProblemRecord using ProblemRepository.save_problem
         try:
-            self.repository.save_problem(problem=problem_record, run_id=run_id)
+            saved_id = self.repository.save_problem(problem=problem_record, run_id=run_id)
         except Exception as exc:
             raise ProblemExtractionPersistenceError(
                 f"Failed to persist extracted problem for patent '{target_patent.patent_number}': {exc}"
             ) from exc
 
-        # 7. Return the validated ProblemRecord
+        # 7. Return the validated ProblemRecord populated with persisted UUID
+        if saved_id:
+            return replace(problem_record, id=saved_id)
         return problem_record
 
     def extract_problem_for_patent(self, run_id: str, patent_id: str) -> ProblemRecord:

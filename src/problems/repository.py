@@ -109,7 +109,33 @@ class ProblemRepository:
 
         problem_id = str(uuid.uuid4())
 
-        # 2. Package all ProblemRecord fields inside raw_data JSON for 100% round-trip fidelity
+        # 2. Idempotency Check: if a problem with the same title already exists for this run and patent, return its ID
+        if patent_id_map:
+            placeholders = ",".join("?" for _ in patent_id_map)
+            cursor.execute(
+                f"""
+                SELECT ep.id
+                FROM extracted_problems ep
+                JOIN problem_patents pp ON ep.id = pp.problem_id
+                WHERE ep.run_id = ? AND ep.problem_title = ? AND pp.patent_id IN ({placeholders})
+                GROUP BY ep.id
+                HAVING COUNT(DISTINCT pp.patent_id) = ?;
+                """,
+                [run_id, problem.problem_title] + patent_id_map + [len(patent_id_map)],
+            )
+            existing_row = cursor.fetchone()
+            if existing_row:
+                existing_id = existing_row["id"]
+                logger.info(
+                    "Problem '%s' already exists for run '%s' and patents %s (id=%s). Returning existing ID.",
+                    problem.problem_title,
+                    run_id,
+                    problem.source_patent_numbers,
+                    existing_id,
+                )
+                return existing_id
+
+        # 3. Package all ProblemRecord fields inside raw_data JSON for 100% round-trip fidelity
         stored_payload = {
             "problem_title": problem.problem_title,
             "problem_description": problem.problem_description,
@@ -126,7 +152,7 @@ class ProblemRepository:
         }
         raw_data_json = json.dumps(stored_payload)
 
-        # 3. Insert problem record into extracted_problems
+        # 4. Insert problem record into extracted_problems
         try:
             cursor.execute(
                 """
@@ -149,7 +175,7 @@ class ProblemRepository:
         except sqlite3.Error as err:
             raise ProblemRepositoryError(f"Failed to insert extracted_problem: {err}") from err
 
-        # 4. Link problem to each resolved patent in problem_patents
+        # 5. Link problem to each resolved patent in problem_patents
         for patent_id in patent_id_map:
             self.link_problem_to_patent(problem_id, patent_id, conn=conn)
 
@@ -262,6 +288,50 @@ class ProblemRepository:
             rows = cursor.fetchall()
             return [self._reconstruct_record(cursor, r) for r in rows]
 
+    def get_problem_for_run_and_patent(
+        self,
+        run_id: str,
+        patent_id_or_number: str,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> Optional[ProblemRecord]:
+        """Retrieve an existing ProblemRecord for a specific research run and patent.
+
+        Args:
+            run_id: Research run identifier.
+            patent_id_or_number: Master patent UUID or canonical patent number.
+            conn: Optional database connection.
+
+        Returns:
+            Optional[ProblemRecord]: Reconstructed record if previously extracted, else None.
+        """
+        if not run_id or not run_id.strip() or not patent_id_or_number or not patent_id_or_number.strip():
+            return None
+
+        clean_run_id = run_id.strip()
+        clean_patent = patent_id_or_number.strip()
+
+        query = """
+            SELECT ep.id, ep.run_id, ep.problem_title, ep.problem_description,
+                   ep.bottleneck_type, ep.technical_domain, ep.raw_data, ep.created_at
+            FROM extracted_problems ep
+            JOIN problem_patents pp ON ep.id = pp.problem_id
+            JOIN patents p ON pp.patent_id = p.id
+            WHERE ep.run_id = ? AND (p.id = ? OR p.patent_number = ?)
+            ORDER BY ep.created_at ASC, ep.rowid ASC
+            LIMIT 1;
+        """
+        if conn is not None:
+            cursor = conn.cursor()
+            cursor.execute(query, (clean_run_id, clean_patent, clean_patent))
+            row = cursor.fetchone()
+            return self._reconstruct_record(cursor, row) if row else None
+
+        with get_db(self.db_path) as active_conn:
+            cursor = active_conn.cursor()
+            cursor.execute(query, (clean_run_id, clean_patent, clean_patent))
+            row = cursor.fetchone()
+            return self._reconstruct_record(cursor, row) if row else None
+
     def get_patents_for_problem(
         self,
         problem_id: str,
@@ -340,4 +410,5 @@ class ProblemRepository:
             evidence_confidence=payload.get("evidence_confidence", "medium"),
             source_patent_numbers=source_patents,
             raw_data=payload.get("raw_data", {}),
+            id=str(row["id"]) if row["id"] else None,
         )

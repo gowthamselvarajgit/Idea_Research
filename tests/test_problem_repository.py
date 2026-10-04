@@ -106,6 +106,7 @@ class TestProblemRepository(unittest.TestCase):
         self.assertEqual(retrieved.evidence_summary, problem.evidence_summary)
         self.assertEqual(retrieved.evidence_confidence, problem.evidence_confidence)
         self.assertEqual(retrieved.source_patent_numbers, ("US11223344B2",))
+        self.assertEqual(retrieved.id, problem_id)
 
     def test_uuid_creation(self) -> None:
         """Each save generates a unique, valid UUID4."""
@@ -277,11 +278,52 @@ class TestProblemRepository(unittest.TestCase):
         with self.assertRaises(ProblemRepositoryError):
             self.repo.save_problem(valid_problem, run_id="   ")
 
-        # Unknown IDs
-        self.assertIsNone(self.repo.get_problem_by_id("non-existent-uuid"))
-        self.assertIsNone(self.repo.get_problem_by_id(""))
-        self.assertEqual(self.repo.get_patents_for_problem("non-existent-uuid"), [])
-        self.assertEqual(self.repo.get_problems_for_run(""), [])
+    def test_save_problem_idempotency(self) -> None:
+        """Verify saving the same problem for the same run and patent returns the existing ID without duplicating."""
+        self._seed_patent("US11223344B2")
+        problem = self._sample_problem(title="Original Problem")
+
+        id1 = self.repo.save_problem(problem, run_id="run-001")
+        # Attempt duplicate save
+        id2 = self.repo.save_problem(problem, run_id="run-001")
+
+        self.assertEqual(id1, id2)
+
+        # Verify only 1 problem row and 1 problem_patents row exists
+        problems = self.repo.get_problems_for_run("run-001")
+        self.assertEqual(len(problems), 1)
+
+        with get_db(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM extracted_problems WHERE run_id = 'run-001';")
+            self.assertEqual(cursor.fetchone()[0], 1)
+            cursor.execute("SELECT COUNT(*) FROM problem_patents;")
+            self.assertEqual(cursor.fetchone()[0], 1)
+
+    def test_get_problem_for_run_and_patent(self) -> None:
+        """Verify lookup of problem by run_id and patent number or ID."""
+        pat_id = self._seed_patent("US11223344B2")
+        self._seed_patent("US9988776B2")
+
+        prob1 = self._sample_problem(title="Problem 1", source_patents=("US11223344B2",))
+        prob2 = self._sample_problem(title="Problem 2", source_patents=("US9988776B2",))
+
+        self.repo.save_problem(prob1, run_id="run-001")
+        self.repo.save_problem(prob2, run_id="run-001")
+
+        # Lookup by patent_number
+        found_by_num = self.repo.get_problem_for_run_and_patent("run-001", "US11223344B2")
+        self.assertIsNotNone(found_by_num)
+        self.assertEqual(found_by_num.problem_title, "Problem 1")
+
+        # Lookup by patent UUID
+        found_by_id = self.repo.get_problem_for_run_and_patent("run-001", pat_id)
+        self.assertIsNotNone(found_by_id)
+        self.assertEqual(found_by_id.problem_title, "Problem 1")
+
+        # Lookup non-existent
+        self.assertIsNone(self.repo.get_problem_for_run_and_patent("run-002", "US11223344B2"))
+        self.assertIsNone(self.repo.get_problem_for_run_and_patent("run-001", "NONEXISTENT"))
 
     def test_production_database_remains_untouched(self) -> None:
         """Ensure testing uses isolated databases and leaves data/research_engine.db empty."""

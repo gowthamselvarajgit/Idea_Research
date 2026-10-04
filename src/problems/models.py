@@ -5,7 +5,7 @@ problems and bottlenecks extracted from patent literature.
 """
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 REQUIRED_TEXT_FIELDS = (
@@ -39,6 +39,7 @@ class ProblemRecord:
         evidence_confidence: Confidence evaluation (e.g., high, medium, low).
         source_patent_numbers: Tuple of canonical normalized patent publication numbers.
         raw_data: Optional dictionary preserving raw extraction payload and metadata.
+        id: Optional persistent UUID primary key assigned upon database storage.
     """
 
     problem_title: str
@@ -53,9 +54,16 @@ class ProblemRecord:
     evidence_confidence: str
     source_patent_numbers: tuple[str, ...]
     raw_data: dict = field(default_factory=dict)
+    id: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate field constraints and ensure immutability conventions."""
+        # 0. Validate optional id
+        if self.id is not None:
+            if not isinstance(self.id, str) or not self.id.strip():
+                raise ValueError("ProblemRecord id must be a non-empty string if provided.")
+            object.__setattr__(self, "id", self.id.strip())
+
         # 1. Validate required text fields
         for field_name in REQUIRED_TEXT_FIELDS:
             val = getattr(self, field_name)

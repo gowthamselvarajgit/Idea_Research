@@ -26,6 +26,7 @@ class TestAntigravityAIClient(unittest.TestCase):
             model="gemini-3.8-flash-low",
             executable="agy",
             timeout_seconds=120,
+            retry_backoff_seconds=0.0,
         )
 
     @patch("subprocess.run")
@@ -272,6 +273,151 @@ class TestAntigravityAIClient(unittest.TestCase):
 
         with self.assertRaises(AIClientInputError):
             AntigravityAIClient(timeout_seconds=-10)
+
+        with self.assertRaises(AIClientInputError):
+            AntigravityAIClient(max_retries=-1)
+
+        with self.assertRaises(AIClientInputError):
+            AntigravityAIClient(retry_backoff_seconds=-0.5)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_transient_process_failure_then_success_retries(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Transient non-zero exit code retries and succeeds on subsequent attempt."""
+        failed_proc = subprocess.CompletedProcess(
+            args=["agy"],
+            returncode=1,
+            stdout="",
+            stderr="Rate limit 429",
+        )
+        success_payload = json.dumps({"status": "SUCCESS", "response": "Recovered output"})
+        success_proc = subprocess.CompletedProcess(
+            args=["agy"],
+            returncode=0,
+            stdout=success_payload,
+            stderr="",
+        )
+        mock_run.side_effect = [failed_proc, success_proc]
+
+        client = AntigravityAIClient(max_retries=2, retry_backoff_seconds=0.1)
+        result = client.generate("Sys", "User")
+
+        self.assertEqual(result, "Recovered output")
+        self.assertEqual(mock_run.call_count, 2)
+        mock_sleep.assert_called_once_with(0.1)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_timeout_then_success_retries(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Timeout on first attempt retries and succeeds on second attempt."""
+        timeout_err = subprocess.TimeoutExpired(cmd=["agy"], timeout=120)
+        success_payload = json.dumps({"status": "SUCCESS", "response": "Timeout recovery"})
+        success_proc = subprocess.CompletedProcess(
+            args=["agy"],
+            returncode=0,
+            stdout=success_payload,
+            stderr="",
+        )
+        mock_run.side_effect = [timeout_err, success_proc]
+
+        client = AntigravityAIClient(max_retries=2, retry_backoff_seconds=0.2)
+        result = client.generate("Sys", "User")
+
+        self.assertEqual(result, "Timeout recovery")
+        self.assertEqual(mock_run.call_count, 2)
+        mock_sleep.assert_called_once_with(0.2)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_all_process_retries_exhausted_raises_process_error(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """When all attempts fail with non-zero exit code, AIClientProcessError is raised."""
+        failed_proc = subprocess.CompletedProcess(
+            args=["agy"],
+            returncode=1,
+            stdout="",
+            stderr="Persistent connection error",
+        )
+        mock_run.return_value = failed_proc
+
+        client = AntigravityAIClient(max_retries=2, retry_backoff_seconds=0.01)
+        with self.assertRaises(AIClientProcessError) as ctx:
+            client.generate("Sys", "User")
+
+        self.assertIn("code 1", str(ctx.exception))
+        self.assertEqual(mock_run.call_count, 3)  # 1 initial + 2 retries
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_all_timeout_retries_exhausted_raises_timeout_error(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """When all attempts time out, AIClientTimeoutError is raised."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["agy"], timeout=120)
+
+        client = AntigravityAIClient(max_retries=1, retry_backoff_seconds=0.01)
+        with self.assertRaises(AIClientTimeoutError):
+            client.generate("Sys", "User")
+
+        self.assertEqual(mock_run.call_count, 2)  # 1 initial + 1 retry
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_non_retryable_executable_error_not_retried(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Missing CLI executable fails immediately without retry."""
+        mock_run.side_effect = FileNotFoundError("Executable not found")
+
+        client = AntigravityAIClient(max_retries=2)
+        with self.assertRaises(AIClientExecutableError):
+            client.generate("Sys", "User")
+
+        self.assertEqual(mock_run.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_non_retryable_response_error_not_retried(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Completed subprocess with invalid JSON is not retried."""
+        invalid_proc = subprocess.CompletedProcess(
+            args=["agy"],
+            returncode=0,
+            stdout="Invalid non-json output",
+            stderr="",
+        )
+        mock_run.return_value = invalid_proc
+
+        client = AntigravityAIClient(max_retries=2)
+        with self.assertRaises(AIClientResponseError):
+            client.generate("Sys", "User")
+
+        self.assertEqual(mock_run.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_max_retries_zero_performs_exactly_one_attempt(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Setting max_retries=0 performs exactly one attempt and raises immediately on failure."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["agy"], timeout=120)
+
+        client = AntigravityAIClient(max_retries=0)
+        with self.assertRaises(AIClientTimeoutError):
+            client.generate("Sys", "User")
+
+        self.assertEqual(mock_run.call_count, 1)
+        mock_sleep.assert_not_called()
 
 
 if __name__ == "__main__":

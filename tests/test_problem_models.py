@@ -170,6 +170,26 @@ class TestProblemRecord(unittest.TestCase):
         self.assertEqual(as_dict["problem_title"], problem.problem_title)
         self.assertEqual(as_dict["source_patent_numbers"], ("US11223344B2",))
         self.assertEqual(as_dict["raw_data"], problem.raw_data)
+        self.assertIsNone(as_dict["id"])
+
+    def test_optional_id_attribute(self) -> None:
+        """Optional id field defaults to None, accepts valid UUID, and rejects empty strings."""
+        kwargs = self._sample_kwargs()
+        p_no_id = ProblemRecord(**kwargs)
+        self.assertIsNone(p_no_id.id)
+
+        kwargs["id"] = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+        p_with_id = ProblemRecord(**kwargs)
+        self.assertEqual(p_with_id.id, "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+
+        # Empty string / whitespace rejects
+        kwargs["id"] = ""
+        with self.assertRaises(ValueError):
+            ProblemRecord(**kwargs)
+
+        kwargs["id"] = "   "
+        with self.assertRaises(ValueError):
+            ProblemRecord(**kwargs)
 
 
 if __name__ == "__main__":
