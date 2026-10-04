@@ -1,0 +1,179 @@
+"""AI client implementation interfacing with the local Antigravity CLI runtime."""
+
+import json
+import logging
+import subprocess
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class AIClientError(Exception):
+    """Base exception for all AI client execution errors."""
+    pass
+
+
+class AIClientInputError(AIClientError, ValueError):
+    """Raised when provided prompts or configuration inputs are invalid."""
+    pass
+
+
+class AIClientExecutableError(AIClientError):
+    """Raised when the specified AI CLI executable cannot be found on PATH."""
+    pass
+
+
+class AIClientTimeoutError(AIClientError):
+    """Raised when AI process execution exceeds the configured timeout."""
+    pass
+
+
+class AIClientProcessError(AIClientError):
+    """Raised when the AI CLI process terminates with a non-zero exit code."""
+    pass
+
+
+class AIClientResponseError(AIClientError):
+    """Raised when the AI CLI response payload is malformed or invalid."""
+    pass
+
+
+def _build_combined_prompt(system_prompt: str, user_prompt: str) -> str:
+    """Deterministically assemble system instructions and user context.
+
+    Args:
+        system_prompt: System-level extraction guidelines and constraints.
+        user_prompt: Specific patent disclosure text and context.
+
+    Returns:
+        str: Structured prompt separating instructions from user input.
+    """
+    return (
+        "=== SYSTEM INSTRUCTIONS ===\n"
+        f"{system_prompt.strip()}\n\n"
+        "=== USER INPUT ===\n"
+        f"{user_prompt.strip()}"
+    )
+
+
+class AntigravityAIClient:
+    """AI client invoking the local authenticated Antigravity CLI executable."""
+
+    def __init__(
+        self,
+        model: str = "gemini-3.8-flash-low",
+        executable: str = "agy",
+        timeout_seconds: int = 120,
+    ) -> None:
+        """Initialize the client.
+
+        Args:
+            model: Model identifier supported by agy (default: gemini-3.8-flash-low).
+            executable: CLI executable command or path (default: agy).
+            timeout_seconds: Subprocess execution timeout in seconds (default: 120).
+
+        Raises:
+            AIClientInputError: If configuration arguments are invalid.
+        """
+        if not model or not model.strip():
+            raise AIClientInputError("model must be a non-empty string.")
+        if not executable or not executable.strip():
+            raise AIClientInputError("executable must be a non-empty string.")
+        if timeout_seconds <= 0:
+            raise AIClientInputError("timeout_seconds must be a positive integer.")
+
+        self.model = model.strip()
+        self.executable = executable.strip()
+        self.timeout_seconds = timeout_seconds
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        """Invoke the AI model via the Antigravity CLI and return generated text.
+
+        Args:
+            system_prompt: Non-empty system instructions string.
+            user_prompt: Non-empty user prompt string.
+
+        Returns:
+            str: Raw generated response text from the model.
+
+        Raises:
+            AIClientInputError: If prompts are invalid.
+            AIClientExecutableError: If the CLI executable is missing.
+            AIClientTimeoutError: If execution exceeds timeout.
+            AIClientProcessError: If process exits with non-zero return code.
+            AIClientResponseError: If JSON or response payload is invalid.
+        """
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            raise AIClientInputError("system_prompt must be a non-empty string.")
+        if not isinstance(user_prompt, str) or not user_prompt.strip():
+            raise AIClientInputError("user_prompt must be a non-empty string.")
+
+        combined_prompt = _build_combined_prompt(system_prompt, user_prompt)
+
+        cmd = [
+            self.executable,
+            "--model",
+            self.model,
+            "--print",
+            combined_prompt,
+            "--output-format",
+            "json",
+        ]
+
+        logger.debug("Executing AI command: %s (model=%s)", self.executable, self.model)
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as err:
+            raise AIClientExecutableError(
+                f"AI CLI executable '{self.executable}' not found on system PATH."
+            ) from err
+        except subprocess.TimeoutExpired as err:
+            raise AIClientTimeoutError(
+                f"AI process execution timed out after {self.timeout_seconds} seconds."
+            ) from err
+        except Exception as err:
+            raise AIClientError(f"Unexpected error executing AI process: {err}") from err
+
+        if proc.returncode != 0:
+            stderr_clean = proc.stderr.strip() if proc.stderr else ""
+            raise AIClientProcessError(
+                f"AI process exited with code {proc.returncode}. Stderr: {stderr_clean}"
+            )
+
+        # Parse output wrapper
+        try:
+            payload = json.loads(proc.stdout)
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            raise AIClientResponseError(
+                f"Failed to parse AI CLI stdout as JSON: {err}"
+            ) from err
+
+        if not isinstance(payload, dict):
+            raise AIClientResponseError(
+                f"Expected JSON object from AI CLI, got {type(payload).__name__}."
+            )
+
+        status = payload.get("status")
+        if status != "SUCCESS":
+            raise AIClientResponseError(
+                f"AI CLI returned non-success status: '{status}'."
+            )
+
+        response = payload.get("response")
+        if response is None:
+            raise AIClientResponseError("AI CLI JSON output missing 'response' field.")
+
+        if not isinstance(response, str):
+            raise AIClientResponseError(
+                f"AI CLI 'response' field must be a string, got {type(response).__name__}."
+            )
+
+        return response

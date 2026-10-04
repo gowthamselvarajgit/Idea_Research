@@ -1,0 +1,295 @@
+"""Unit tests for ProblemExtractionService using mocked dependencies."""
+
+import json
+import unittest
+from unittest.mock import MagicMock, patch
+
+from src.patents.models import PatentRecord
+from src.problems.ai_client import AIClientError, AIClientTimeoutError
+from src.problems.extraction_contract import ProblemContractValidationError
+from src.problems.extraction_prompt import (
+    PROBLEM_EXTRACTION_SYSTEM_PROMPT,
+    format_patent_extraction_user_prompt,
+)
+from src.problems.extraction_service import (
+    PatentNotInRunError,
+    ProblemExtractionAIError,
+    ProblemExtractionPersistenceError,
+    ProblemExtractionService,
+    ProblemExtractionServiceError,
+)
+from src.problems.models import ProblemRecord
+from src.problems.output_parser import (
+    ProblemOutputParseError,
+    parse_problem_extraction_output,
+)
+from src.problems.patent_input import build_patent_extraction_input
+from src.problems.repository import ProblemRepository, ProblemRepositoryError
+
+
+class TestProblemExtractionService(unittest.TestCase):
+    """Test suite for ProblemExtractionService with mocked dependencies."""
+
+    def setUp(self) -> None:
+        """Set up test fixtures with fake patent, valid AI output, and mocks."""
+        self.mock_ai_client = MagicMock()
+        self.mock_repository = MagicMock(spec=ProblemRepository)
+        self.mock_patent_reader = MagicMock()
+
+        self.sample_patent = PatentRecord(
+            patent_number="US11223344B2",
+            title="Solid-state battery thermal management system",
+            abstract=(
+                "A battery pack thermal dissipation architecture utilizing phase change "
+                "materials and embedded micro-channels to prevent localized thermal hotspots "
+                "during high-rate fast-charging cycles."
+            ),
+            filing_date="2022-01-15",
+            publication_date="2023-08-10",
+            assignee="NextGen Power Corp",
+            source_url="https://patents.google.com/patent/US11223344B2/en",
+            raw_data={"test": True},
+        )
+
+        self.valid_ai_dict = {
+            "problem_title": "Localized thermal hotspots during high-rate battery charging",
+            "problem_description": (
+                "High current density during fast charging causes non-uniform heating and "
+                "accelerated cell degradation."
+            ),
+            "affected_users": "EV Battery Pack Thermal Engineers",
+            "bottleneck_type": "thermal runaway and localized degradation",
+            "technical_domain": "Energy Storage Systems",
+            "current_workaround": "Throttling charge rate and bulky liquid cooling plates",
+            "problem_frequency": "daily",
+            "problem_severity": "high",
+            "evidence_summary": (
+                "Patent notes uneven thermal distribution during fast charging leads to "
+                "premature capacity loss."
+            ),
+            "evidence_confidence": "high",
+        }
+        self.valid_ai_json = json.dumps(self.valid_ai_dict)
+
+        self.mock_ai_client.generate.return_value = self.valid_ai_json
+        self.mock_patent_reader.get_patents_for_run.return_value = [self.sample_patent]
+        self.mock_repository.save_problem.return_value = "prob-uuid-1234"
+
+        self.service = ProblemExtractionService(
+            ai_client=self.mock_ai_client,
+            repository=self.mock_repository,
+            patent_reader=self.mock_patent_reader,
+        )
+
+    def test_successful_extraction_and_persistence(self) -> None:
+        """Verify successful end-to-end extraction and persistence."""
+        run_id = "run-001"
+        patent_id = "US11223344B2"
+
+        result = self.service.extract_problem_for_patent(run_id=run_id, patent_id=patent_id)
+
+        self.assertIsInstance(result, ProblemRecord)
+        self.assertEqual(result.problem_title, self.valid_ai_dict["problem_title"])
+        self.assertEqual(result.affected_users, self.valid_ai_dict["affected_users"])
+        self.assertEqual(result.bottleneck_type, self.valid_ai_dict["bottleneck_type"])
+        self.assertEqual(result.problem_frequency, "daily")
+        self.assertEqual(result.problem_severity, "high")
+        self.assertEqual(result.evidence_confidence, "high")
+        self.assertEqual(result.source_patent_numbers, ("US11223344B2",))
+
+    def test_correct_patent_input_passed_to_prompt_builder(self) -> None:
+        """Verify correct patent input dictionary is passed into the prompt builder."""
+        with patch(
+            "src.problems.extraction_service.build_patent_extraction_input",
+            wraps=build_patent_extraction_input,
+        ) as mock_input_builder:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+            mock_input_builder.assert_called_once_with(self.sample_patent)
+            call_arg = mock_input_builder.call_args[0][0]
+            self.assertEqual(call_arg.patent_number, "US11223344B2")
+            self.assertEqual(call_arg.title, self.sample_patent.title)
+            self.assertEqual(call_arg.abstract, self.sample_patent.abstract)
+
+    def test_system_prompt_passed_unchanged(self) -> None:
+        """Verify that the system prompt passed to AI client matches PROBLEM_EXTRACTION_SYSTEM_PROMPT."""
+        self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.mock_ai_client.generate.assert_called_once()
+        _, kwargs = self.mock_ai_client.generate.call_args
+        self.assertEqual(kwargs["system_prompt"], PROBLEM_EXTRACTION_SYSTEM_PROMPT)
+
+    def test_user_prompt_passed_correctly(self) -> None:
+        """Verify that the user prompt passed to AI client is correctly formatted."""
+        expected_input = build_patent_extraction_input(self.sample_patent)
+        expected_user_prompt = format_patent_extraction_user_prompt(expected_input)
+
+        self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        _, kwargs = self.mock_ai_client.generate.call_args
+        self.assertEqual(kwargs["user_prompt"], expected_user_prompt)
+
+    def test_ai_client_called_exactly_once(self) -> None:
+        """Verify that the injected AI client generate method is called exactly once."""
+        self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertEqual(self.mock_ai_client.generate.call_count, 1)
+
+    def test_parser_receives_ai_response_and_source_patent_number(self) -> None:
+        """Verify that the parser receives the exact AI text and source patent number tuple."""
+        with patch(
+            "src.problems.extraction_service.parse_problem_extraction_output",
+            wraps=parse_problem_extraction_output,
+        ) as mock_parser:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+            mock_parser.assert_called_once_with(
+                response_text=self.valid_ai_json,
+                source_patent_numbers=("US11223344B2",),
+            )
+
+    def test_repository_receives_parsed_problem_record_and_run_id(self) -> None:
+        """Verify that the repository receives the exact ProblemRecord and run ID."""
+        result = self.service.extract_problem_for_patent("run-xyz", "US11223344B2")
+
+        self.mock_repository.save_problem.assert_called_once_with(
+            problem=result,
+            run_id="run-xyz",
+        )
+
+    def test_patent_not_belonging_to_run(self) -> None:
+        """Verify that PatentNotInRunError is raised when patent is not in the research run."""
+        # Reader returns patents, but none match the requested patent
+        self.mock_patent_reader.get_patents_for_run.return_value = [self.sample_patent]
+
+        with self.assertRaises(PatentNotInRunError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US9999999B1")
+
+        self.assertIn("US9999999B1", str(ctx.exception))
+        self.assertIn("run-001", str(ctx.exception))
+        self.assertIsInstance(ctx.exception, ProblemExtractionServiceError)
+
+        # AI client and repository must never be called
+        self.mock_ai_client.generate.assert_not_called()
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_patent_not_in_run_empty_run(self) -> None:
+        """Verify PatentNotInRunError when research run has zero patents."""
+        self.mock_patent_reader.get_patents_for_run.return_value = []
+
+        with self.assertRaises(PatentNotInRunError):
+            self.service.extract_problem_for_patent("empty-run", "US11223344B2")
+
+        self.mock_ai_client.generate.assert_not_called()
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_ai_client_failure(self) -> None:
+        """Verify that an AI failure raises ProblemExtractionAIError with cause preserved."""
+        original_error = AIClientTimeoutError("Subprocess agy timed out after 120s.")
+        self.mock_ai_client.generate.side_effect = original_error
+
+        with self.assertRaises(ProblemExtractionAIError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertIs(ctx.exception.__cause__, original_error)
+        self.assertIsInstance(ctx.exception, ProblemExtractionServiceError)
+        # Persistence must not occur
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_parser_failure_malformed_json(self) -> None:
+        """Verify that parser failure raises ProblemExtractionServiceError with cause preserved."""
+        self.mock_ai_client.generate.return_value = "Not valid json at all"
+
+        with self.assertRaises(ProblemExtractionServiceError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertIsNotNone(ctx.exception.__cause__)
+        self.assertIn("Failed to parse", str(ctx.exception))
+        # Persistence must not occur
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_parser_failure_missing_keys(self) -> None:
+        """Verify that parser failure due to missing keys raises ProblemExtractionServiceError."""
+        incomplete_json = json.dumps({"problem_title": "Only one field"})
+        self.mock_ai_client.generate.return_value = incomplete_json
+
+        with self.assertRaises(ProblemExtractionServiceError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertIsNotNone(ctx.exception.__cause__)
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_repository_failure(self) -> None:
+        """Verify that repository save failure raises ProblemExtractionPersistenceError with cause."""
+        db_error = ProblemRepositoryError("SQLite database locked.")
+        self.mock_repository.save_problem.side_effect = db_error
+
+        with self.assertRaises(ProblemExtractionPersistenceError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertIs(ctx.exception.__cause__, db_error)
+        self.assertIsInstance(ctx.exception, ProblemExtractionServiceError)
+
+    def test_invalid_run_id(self) -> None:
+        """Verify that invalid run_id values raise ProblemExtractionServiceError."""
+        invalid_ids = ["", "   ", None, 123, []]
+        for invalid in invalid_ids:
+            with self.subTest(invalid_run_id=invalid):
+                with self.assertRaises(ProblemExtractionServiceError):
+                    self.service.extract_problem_for_patent(run_id=invalid, patent_id="US11223344B2")
+
+        self.mock_patent_reader.get_patents_for_run.assert_not_called()
+        self.mock_ai_client.generate.assert_not_called()
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_invalid_patent_id(self) -> None:
+        """Verify that invalid patent_id values raise ProblemExtractionServiceError."""
+        invalid_ids = ["", "   ", None, 123, []]
+        for invalid in invalid_ids:
+            with self.subTest(invalid_patent_id=invalid):
+                with self.assertRaises(ProblemExtractionServiceError):
+                    self.service.extract_problem_for_patent(run_id="run-001", patent_id=invalid)
+
+        self.mock_patent_reader.get_patents_for_run.assert_not_called()
+        self.mock_ai_client.generate.assert_not_called()
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_patent_reader_failure(self) -> None:
+        """Verify that an unexpected patent reader exception raises ProblemExtractionServiceError."""
+        self.mock_patent_reader.get_patents_for_run.side_effect = RuntimeError("Disk error reading run")
+
+        with self.assertRaises(ProblemExtractionServiceError) as ctx:
+            self.service.extract_problem_for_patent("run-001", "US11223344B2")
+
+        self.assertIsInstance(ctx.exception.__cause__, RuntimeError)
+        self.mock_ai_client.generate.assert_not_called()
+        self.mock_repository.save_problem.assert_not_called()
+
+    def test_constructor_dependency_injection(self) -> None:
+        """Verify constructor enforces required dependencies."""
+        with self.assertRaises(ValueError):
+            ProblemExtractionService(ai_client=None, repository=self.mock_repository, patent_reader=self.mock_patent_reader)
+
+        with self.assertRaises(ValueError):
+            ProblemExtractionService(ai_client=self.mock_ai_client, repository=None, patent_reader=self.mock_patent_reader)
+
+        with self.assertRaises(ValueError):
+            ProblemExtractionService(ai_client=self.mock_ai_client, repository=self.mock_repository, patent_reader=None)
+
+    def test_constructor_supports_problem_repository_kwarg(self) -> None:
+        """Verify constructor supports problem_repository keyword argument."""
+        service = ProblemExtractionService(
+            ai_client=self.mock_ai_client,
+            problem_repository=self.mock_repository,
+            patent_reader=self.mock_patent_reader,
+        )
+        self.assertIs(service.repository, self.mock_repository)
+
+    def test_patent_matched_with_punctuation_variations(self) -> None:
+        """Verify patent can be matched when formatted with spaces/dashes."""
+        result = self.service.extract_problem_for_patent("run-001", "US 11,223,344-B2")
+        self.assertEqual(result.source_patent_numbers, ("US11223344B2",))
+
+
+if __name__ == "__main__":
+    unittest.main()
