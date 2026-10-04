@@ -15,6 +15,7 @@ from src.patents.epo_client import (
     EPOClientNetworkError,
     EPOClientResponseError,
 )
+from src.patents.epo_parser import EPOParserError, parse_epo_search_response
 from src.patents.models import (
     PatentRecord,
     build_canonical_url,
@@ -45,6 +46,7 @@ __all__ = [
     "EPOHTTPError",
     "EPOMissingCredentialsError",
     "EPONetworkError",
+    "EPOParserError",
     "EPOResponseError",
     "PatentClientError",
     "PatentRecord",
@@ -58,6 +60,7 @@ __all__ = [
     "is_valid_patent_number",
     "normalize_patent_components",
     "normalize_patent_number",
+    "parse_epo_search_response",
     "validate_patent_number",
 ]
 
