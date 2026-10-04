@@ -30,7 +30,15 @@ from src.patents.models import (
     validate_patent_number,
 )
 
+from src.patents.ingestion_service import (
+    EPOIngestionDiscoveryError,
+    EPOIngestionError,
+    EPOIngestionRepositoryError,
+    EPOIngestionService,
+    IngestionResult,
+)
 from src.patents.repository import PatentRepository
+from src.patents.run_reader import ResearchRunPatentReader
 from src.patents.uspto_client import (
     USPTOClient,
     USPTOClientError,
@@ -54,13 +62,19 @@ __all__ = [
     "EPODiscoveryError",
     "EPODiscoveryService",
     "EPOHTTPError",
+    "EPOIngestionDiscoveryError",
+    "EPOIngestionError",
+    "EPOIngestionRepositoryError",
+    "EPOIngestionService",
     "EPOMissingCredentialsError",
     "EPONetworkError",
     "EPOParserError",
     "EPOResponseError",
+    "IngestionResult",
     "PatentClientError",
     "PatentRecord",
     "PatentRepository",
+    "ResearchRunPatentReader",
     "USPTOClient",
     "USPTOClientError",
     "USPTOHTTPError",
