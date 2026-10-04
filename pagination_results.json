@@ -1,0 +1,43 @@
+{
+  "results_page_detected": true,
+  "page_2_button_found": true,
+  "page_2_loaded": true,
+  "first_3_patents_extracted": true,
+  "patents": [
+    {
+      "index": 1,
+      "application_number": "202641109752",
+      "title": "A SYSTEM AND METHOD FOR INLINE DUAL-WAVELENGTH OPTICAL DETECTION OF MICROPLASTICS IN FLOWING WATER",
+      "raw_cells": [
+        "202641109752",
+        "A SYSTEM AND METHOD FOR INLINE DUAL-WAVELENGTH OPTICAL DETECTION OF MICROPLASTICS IN FLOWING WATER",
+        "12/09/2026",
+        "Published"
+      ]
+    },
+    {
+      "index": 2,
+      "application_number": "202641109913",
+      "title": "WATER TANK MANAGEMENT SYSTEM AND METHOD THEREOF",
+      "raw_cells": [
+        "202641109913",
+        "WATER TANK MANAGEMENT SYSTEM AND METHOD THEREOF",
+        "11/09/2026",
+        "Published"
+      ]
+    },
+    {
+      "index": 3,
+      "application_number": "202641109024",
+      "title": "MACHINE LEARNING-BASED INTELLIGENT SYSTEM FOR PREDICTING SUPER EL NI\u00d1O-INDUCED WATER DEMAND, AGRICULTURAL LOSS AND ECONOMIC IMPACT",
+      "raw_cells": [
+        "202641109024",
+        "MACHINE LEARNING-BASED INTELLIGENT SYSTEM FOR PREDICTING SUPER EL NI\u00d1O-INDUCED WATER DEMAND, AGRICULTURAL LOSS AND ECONOMIC IMPACT",
+        "11/09/2026",
+        "Published"
+      ]
+    }
+  ],
+  "total_documents": null,
+  "error": null
+}
