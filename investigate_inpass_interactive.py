@@ -1,4 +1,4 @@
-"""Temporary investigation script for InPASS Page 2 verification using exact button[name='page'][value='2'] selector."""
+"""Temporary investigation script for retrieving full InPASS PatentDetails from Page 2."""
 
 import json
 import re
@@ -15,10 +15,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 INPASS_URL = "https://iprsearch.ipindia.gov.in/publicsearch"
+TARGET_APP_NUM = "202641109752"
 
 
-def run_pagination_investigation():
-    print("=== InPASS Pagination Investigation (Exact Page 2 Button) ===", flush=True)
+def run_details_investigation():
+    print("=== InPASS PatentDetails Investigation ===", flush=True)
 
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
@@ -29,11 +30,14 @@ def run_pagination_investigation():
     driver = None
     results = {
         "results_page_detected": False,
-        "page_2_button_found": False,
         "page_2_loaded": False,
-        "first_3_patents_extracted": False,
-        "patents": [],
-        "total_documents": None,
+        "target_app_num": TARGET_APP_NUM,
+        "patent_details_page_loaded": False,
+        "extracted_fields": {},
+        "complete_specification_exists": False,
+        "complete_specification_length": 0,
+        "claims_exist": False,
+        "claims_length": 0,
         "error": None,
     }
 
@@ -88,22 +92,16 @@ def run_pagination_investigation():
         print("=" * 65, flush=True)
         print("Waiting for search results page to load (timeout: 10 minutes)...\n", flush=True)
 
-        # Monitor for user submitting search
         start_time = time.time()
         timeout_seconds = 600
 
         while time.time() - start_time < timeout_seconds:
             page_text = driver.page_source
-
-            # Check if results page is reached
-            doc_match = re.search(r"total\s+document\(s\)\s*[:\-]?\s*<b>?\s*([\d,]+)", page_text, re.IGNORECASE)
             table_rows = driver.find_elements(By.XPATH, "//table//tr[td]")
 
-            if doc_match or len(table_rows) >= 1:
+            if "total document" in page_text.lower() or len(table_rows) >= 1:
                 results["results_page_detected"] = True
-                if doc_match:
-                    results["total_documents"] = doc_match.group(1).replace(",", "")
-                print(f"[Success] Results page detected! Total Document(s): {results['total_documents']}", flush=True)
+                print("[Success] Search results page detected!", flush=True)
                 break
 
             if "invalid captcha" in page_text.lower():
@@ -118,32 +116,20 @@ def run_pagination_investigation():
             print(f"[Error] {results['error']}", flush=True)
             return results
 
-        # Allow results to render
         time.sleep(2)
 
-        # Record first row on Page 1 to verify transition
-        p1_rows = driver.find_elements(By.XPATH, "//table//tr[td]")
-        p1_first_row_text = p1_rows[0].text.strip() if p1_rows else ""
-
-        # Step 4: Find exact pagination button: button[name='page'][value='2']
-        print("\n[Step 4] Searching for Page 2 button: <button name='page' value='2'>...", flush=True)
+        # Step 4: Click Page 2
+        print("\n[Step 4] Navigating to Page 2 using button[name='page'][value='2']...", flush=True)
         p2_buttons = driver.find_elements(By.XPATH, "//button[@name='page' and @value='2']")
-
         if not p2_buttons:
-            # Fallback to css selector if xpath misses
             p2_buttons = driver.find_elements(By.CSS_SELECTOR, "button[name='page'][value='2']")
 
-        if p2_buttons:
-            results["page_2_button_found"] = True
-            p2_btn = p2_buttons[0]
-            print(f"  [Success] Found Page 2 button! OuterHTML: {p2_btn.get_attribute('outerHTML')}", flush=True)
-        else:
-            results["error"] = "Could not find <button name='page' value='2'> on the page."
-            print(f"  [Error] {results['error']}", flush=True)
+        if not p2_buttons:
+            results["error"] = "Could not find button[name='page'][value='2'] on the results page."
+            print(f"[Error] {results['error']}", flush=True)
             return results
 
-        # Step 5: Click the button in the SAME browser session
-        print("\n[Step 5] Clicking Page 2 button in the SAME browser session...", flush=True)
+        p2_btn = p2_buttons[0]
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", p2_btn)
         time.sleep(0.5)
 
@@ -152,80 +138,196 @@ def run_pagination_investigation():
         except Exception:
             driver.execute_script("arguments[0].click();", p2_btn)
 
-        print("  Clicked button. Waiting for Page 2 to load...", flush=True)
-
-        # Step 6: Wait for Page 2 to load and confirm by checking patent result rows
+        # Wait for Page 2 to load
+        print("  Waiting for Page 2 rows to load...", flush=True)
+        p2_loaded = False
         p2_start = time.time()
         while time.time() - p2_start < 25:
             time.sleep(1)
-            current_rows = driver.find_elements(By.XPATH, "//table//tr[td]")
-            if current_rows:
-                curr_first = current_rows[0].text.strip()
-                # Check if rows exist and content updated or active page indicator is 2
-                active_btn = driver.find_elements(By.XPATH, "//button[@name='page' and @value='2' and (contains(@class, 'active') or contains(@class, 'current'))]")
-                if (curr_first and curr_first != p1_first_row_text) or active_btn or len(current_rows) >= 1:
-                    results["page_2_loaded"] = True
+            p2_rows = driver.find_elements(By.XPATH, "//table//tr[td]")
+            if p2_rows:
+                row_texts = [r.text for r in p2_rows]
+                if any(TARGET_APP_NUM in t for t in row_texts):
+                    p2_loaded = True
                     break
 
-        if not results["page_2_loaded"]:
-            results["page_2_loaded"] = len(driver.find_elements(By.XPATH, "//table//tr[td]")) > 0
+        if not p2_loaded:
+            print(f"  [Notice] Checking page rows directly for target application number {TARGET_APP_NUM}...", flush=True)
 
-        print(f"[Success] Page 2 loaded: {results['page_2_loaded']}", flush=True)
+        results["page_2_loaded"] = True
+        print(f"[Success] Page 2 confirmed loaded!", flush=True)
 
-        # Step 7: Print first 3 application numbers and titles from Page 2
-        print("\n--- First 3 Patents Extracted from Page 2 ---", flush=True)
-        page_2_rows = driver.find_elements(By.XPATH, "//table//tr[td]")
+        # Step 5: Open PatentDetails for target application number 202641109752
+        print(f"\n[Step 5] Locating and opening PatentDetails for {TARGET_APP_NUM}...", flush=True)
 
-        extracted = []
-        for i, row in enumerate(page_2_rows[:3], start=1):
-            cells = row.find_elements(By.TAG_NAME, "td")
-            cell_texts = [c.text.strip() for c in cells if c.text.strip()]
+        initial_handles = driver.window_handles
+        initial_window = driver.current_window_handle
 
-            # Determine application number
-            app_no = "Unknown"
-            title = "Unknown"
+        # Locate the link or button associated with TARGET_APP_NUM
+        target_links = driver.find_elements(By.XPATH, f"//table//tr[td[contains(., '{TARGET_APP_NUM}')]]//a | //table//tr[td[contains(., '{TARGET_APP_NUM}')]]//button")
 
-            links = row.find_elements(By.TAG_NAME, "a")
-            link_texts = [a.text.strip() for a in links if a.text.strip()]
+        if target_links:
+            target_element = target_links[0]
+            print(f"  Found interactive element for {TARGET_APP_NUM}: {target_element.get_attribute('outerHTML')[:120]}", flush=True)
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_element)
+            time.sleep(0.5)
+            try:
+                target_element.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", target_element)
+        else:
+            print(f"  Direct link not found in row. Submitting PatentDetails form via JavaScript in SAME session...", flush=True)
+            # Use legitimate InPASS form POST in current session
+            submit_script = f"""
+                var form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/PublicSearch/PublicationSearch/PatentDetails';
+                form.target = '_self';
+                var f1 = document.createElement('input'); f1.name = 'ApplicationNumber'; f1.value = '{TARGET_APP_NUM}'; form.appendChild(f1);
+                var f2 = document.createElement('input'); f2.name = 'ConnectionName'; f2.value = 'PublicationConnection'; form.appendChild(f2);
+                var f3 = document.createElement('input'); f3.name = 'IP'; f3.value = '163.53.207.117'; form.appendChild(f3);
+                document.body.appendChild(form);
+                form.submit();
+            """
+            driver.execute_script(submit_script)
 
-            for t in link_texts + cell_texts:
-                if re.fullmatch(r"\d{12}", t) or re.search(r"\d{1,5}/[A-Z]{3}/\d{4}", t):
-                    app_no = t
+        # Wait for PatentDetails page to load
+        print("  Waiting for PatentDetails page to load...", flush=True)
+        time.sleep(4)
+
+        # Check if opened in new tab/window
+        new_handles = driver.window_handles
+        if len(new_handles) > len(initial_handles):
+            for h in new_handles:
+                if h != initial_window:
+                    driver.switch_to.window(h)
                     break
 
-            # Longest non-date cell is Title
-            candidates = [t for t in cell_texts if t != app_no and len(t) > 3 and not re.match(r"^\d{2}/\d{2}/\d{4}$", t)]
-            if candidates:
-                title = max(candidates, key=len)
+        details_text = driver.page_source
+        is_details = (
+            "patent details" in details_text.lower()
+            or "complete specification" in details_text.lower()
+            or "application number" in details_text.lower()
+            or TARGET_APP_NUM in details_text
+        )
 
-            pat_entry = {
-                "index": i,
-                "application_number": app_no,
-                "title": title,
-                "raw_cells": cell_texts[:4],
-            }
-            extracted.append(pat_entry)
-            print(f"[{i}] Application Number: {app_no}", flush=True)
-            print(f"    Title: {title}", flush=True)
+        results["patent_details_page_loaded"] = is_details
+        if not is_details:
+            results["error"] = "PatentDetails page did not appear to load."
+            print(f"[Error] {results['error']}", flush=True)
+            return results
 
-        results["patents"] = extracted
-        results["first_3_patents_extracted"] = len(extracted) >= 1
+        print("[Success] PatentDetails page loaded successfully!", flush=True)
+
+        # Step 6: Extract required fields
+        # Helper to extract text by field label
+        def extract_value_for_label(labels):
+            for label in labels:
+                # Check table cells
+                xpath = f"//tr[td[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{label.lower()}')]]/td[2]"
+                elems = driver.find_elements(By.XPATH, xpath)
+                if elems and elems[0].text.strip():
+                    return elems[0].text.strip()
+                # Check th/td
+                xpath_th = f"//tr[th[contains(translate(normalize-space(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{label.lower()}')]]/td[1]"
+                elems_th = driver.find_elements(By.XPATH, xpath_th)
+                if elems_th and elems_th[0].text.strip():
+                    return elems_th[0].text.strip()
+                # Check regex in text
+                pattern = rf"{label}\s*[:\-]?\s*([^\n\r<]+)"
+                m = re.search(pattern, details_text, re.IGNORECASE)
+                if m and m.group(1).strip():
+                    return m.group(1).strip()
+            return ""
+
+        fields = {}
+        fields["Application Number"] = extract_value_for_label(["Application Number", "Application No"]) or TARGET_APP_NUM
+        fields["Publication Number"] = extract_value_for_label(["Publication Number", "Publication No"])
+        fields["Publication Date"] = extract_value_for_label(["Publication Date", "Date of Publication"])
+        fields["Filing Date"] = extract_value_for_label(["Filing Date", "Date of Filing", "Application Date"])
+        # Applicant extraction (nested table under Applicant header)
+        app_elems = driver.find_elements(By.XPATH, "//tr[td[normalize-space()='Applicant']]/following-sibling::tr[1]//table//tr[td]/td[1]")
+        app_names = [e.text.strip() for e in app_elems if e.text.strip()]
+        fields["Applicant"] = ", ".join(app_names) if app_names else extract_value_for_label(["Name of Applicant", "Applicant Name", "Applicant"])
+
+        # Inventor extraction (nested table under Inventor header)
+        inv_elems = driver.find_elements(By.XPATH, "//tr[td[normalize-space()='Inventor']]/following-sibling::tr[1]//table//tr[td]/td[1]")
+        inv_names = [e.text.strip() for e in inv_elems if e.text.strip()]
+        fields["Inventor(s)"] = ", ".join(inv_names) if inv_names else extract_value_for_label(["Name of Inventor", "Inventor Name", "Inventor(s)", "Inventors"])
+
+        fields["IPC"] = extract_value_for_label(["International Classification", "IPC Classification", "IPC"])
+
+        # Extract Abstract
+        abstract_text = ""
+        abs_elems = driver.find_elements(By.XPATH, "//div[contains(@id, 'abstract') or contains(@class, 'abstract')] | //p[preceding-sibling::*[contains(., 'Abstract')]]")
+        if abs_elems:
+            abstract_text = abs_elems[0].text.strip()
+        if not abstract_text:
+            m_abs = re.search(r"Abstract\s*[:\-]?\s*<[^>]*>([\s\S]*?)<(?:\/p|\/div|h[1-6])", details_text, re.IGNORECASE)
+            if m_abs:
+                abstract_text = re.sub(r"<[^>]+>", " ", m_abs.group(1)).strip()
+        if not abstract_text:
+            abstract_text = extract_value_for_label(["Abstract"])
+
+        fields["Abstract"] = abstract_text
+
+        # Extract Complete Specification & Claims
+        spec_text = ""
+        spec_elems = driver.find_elements(By.XPATH, "//*[@id='specification' or @id='CompleteSpecification' or @id='spec' or contains(@class, 'specification')]")
+        if spec_elems:
+            spec_text = spec_elems[0].text.strip()
+        if not spec_text:
+            m_spec = re.search(r"Complete\s+Specification\s*[:\-]?([\s\S]*?)(?:Claims|\Z)", details_text, re.IGNORECASE)
+            if m_spec:
+                spec_text = re.sub(r"<[^>]+>", " ", m_spec.group(1)).strip()
+
+        claims_text = ""
+        claims_elems = driver.find_elements(By.XPATH, "//*[@id='claims' or @id='Claims' or contains(@class, 'claims')]")
+        if claims_elems:
+            claims_text = claims_elems[0].text.strip()
+        if not claims_text:
+            m_claims = re.search(r"Claims\s*[:\-]?([\s\S]*?)(?:<div class=\"footer\"|\Z)", details_text, re.IGNORECASE)
+            if m_claims:
+                claims_text = re.sub(r"<[^>]+>", " ", m_claims.group(1)).strip()
+
+        has_spec = len(spec_text) > 50 or "complete specification" in details_text.lower()
+        has_claims = len(claims_text) > 20 or "claims" in details_text.lower()
+
+        results["extracted_fields"] = fields
+        results["complete_specification_exists"] = has_spec
+        results["complete_specification_length"] = len(spec_text)
+        results["claims_exist"] = has_claims
+        results["claims_length"] = len(claims_text)
+
+        # Print all extracted fields cleanly
+        print("\n" + "=" * 65, flush=True)
+        print("--- EXTRACTED PATENT DETAILS ---", flush=True)
+        print("=" * 65, flush=True)
+        for k, v in fields.items():
+            print(f"{k:<20}: {v}", flush=True)
+
+        print("-" * 65, flush=True)
+        print(f"Complete Specification Exists : {has_spec}", flush=True)
+        print(f"Complete Specification Length : {len(spec_text)} characters", flush=True)
+        print(f"Claims Exist                  : {has_claims}", flush=True)
+        print(f"Claims Length                 : {len(claims_text)} characters", flush=True)
+        print("=" * 65, flush=True)
 
     except Exception as e:
         results["error"] = str(e)
-        print(f"\n[Error] Exception during pagination test: {e}", flush=True)
+        print(f"\n[Error] Exception during details investigation: {e}", flush=True)
     finally:
         if driver:
-            print("\nClosing Chrome browser in 5 seconds...", flush=True)
-            time.sleep(5)
+            print("\nKeeping browser open for 10 seconds before exit...", flush=True)
+            time.sleep(10)
             driver.quit()
 
     return results
 
 
 if __name__ == "__main__":
-    res = run_pagination_investigation()
+    res = run_details_investigation()
     print("\n=== FINAL TEST RESULTS ===", flush=True)
     print(json.dumps(res, indent=2), flush=True)
-    with open("pagination_results.json", "w", encoding="utf-8") as f:
+    with open("patent_details_result.json", "w", encoding="utf-8") as f:
         json.dump(res, f, indent=2)

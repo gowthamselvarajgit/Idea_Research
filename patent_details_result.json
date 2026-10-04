@@ -1,0 +1,23 @@
+{
+  "results_page_detected": true,
+  "page_2_loaded": true,
+  "target_app_num": "202641109752",
+  "patent_details_page_loaded": true,
+  "extracted_fields": {
+    "Application Number": "202641109752",
+    "Publication Number": "38/2026",
+    "Publication Date": "18/09/2026",
+    "Filing Date": "12/09/2026",
+    "Invention Title": "A SYSTEM AND METHOD FOR INLINE DUAL-WAVELENGTH OPTICAL DETECTION OF MICROPLASTICS IN FLOWING WATER",
+    "Applicant": "T.ASHA, S.FATHIMA HAZEERAL, S.HARINI SHREE, Vivekanandha College of Engineering for Women, Dr.R.Kavitha, Mrs.G.Rajeswari, Mrs.S.Saranya",
+    "Inventor(s)": "T.ASHA, S.FATHIMA HAZEERAL, S.HARINI SHREE, Vivekanandha College of Engineering for Women, Dr.R.Kavitha, Mrs.G.Rajeswari, Mrs.S.Saranya",
+    "IPC": "G01N 21/47, G01N 21/21, G01N 21/49, G01N 21/51, G01N 33/18"
+  },
+  "applicant_count": 7,
+  "inventor_count": 7,
+  "complete_specification_exists": true,
+  "complete_specification_length": 40258,
+  "claims_exist": true,
+  "claims_length": 3975,
+  "error": null
+}
