@@ -1,0 +1,139 @@
+"""SQLite database connection and schema management for the Research Engine.
+
+Provides connection helpers, context managers, and schema initialization
+designed to support storing research collected across multiple research runs.
+"""
+
+from contextlib import contextmanager
+from pathlib import Path
+import sqlite3
+from typing import Generator, Optional
+
+from config.settings import DATABASE_PATH
+
+# Foundational Schema DDL
+SCHEMA_DDL = """
+-- Research Runs: tracks distinct execution sessions and queries
+CREATE TABLE IF NOT EXISTS research_runs (
+    id TEXT PRIMARY KEY,
+    run_name TEXT NOT NULL,
+    query TEXT,
+    status TEXT NOT NULL DEFAULT 'initialized',
+    metadata TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- Patents: stores patent records associated with research runs
+CREATE TABLE IF NOT EXISTS patents (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    patent_number TEXT NOT NULL,
+    title TEXT,
+    abstract TEXT,
+    filing_date TEXT,
+    publication_date TEXT,
+    assignee TEXT,
+    raw_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE
+);
+
+-- Extracted Problems: stores technical problems and bottlenecks derived from patents
+CREATE TABLE IF NOT EXISTS extracted_problems (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    patent_id TEXT,
+    problem_title TEXT NOT NULL,
+    problem_description TEXT,
+    bottleneck_type TEXT,
+    technical_domain TEXT,
+    raw_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (patent_id) REFERENCES patents(id) ON DELETE SET NULL
+);
+
+-- Startup Opportunities: stores venture opportunities synthesized from problems
+CREATE TABLE IF NOT EXISTS startup_opportunities (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    problem_id TEXT,
+    opportunity_title TEXT NOT NULL,
+    solution_concept TEXT,
+    target_customer TEXT,
+    value_proposition TEXT,
+    raw_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES research_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (problem_id) REFERENCES extracted_problems(id) ON DELETE SET NULL
+);
+
+-- Indexes for efficient queries across multiple research runs
+CREATE INDEX IF NOT EXISTS idx_patents_run_id ON patents(run_id);
+CREATE INDEX IF NOT EXISTS idx_patents_patent_number ON patents(patent_number);
+CREATE INDEX IF NOT EXISTS idx_problems_run_id ON extracted_problems(run_id);
+CREATE INDEX IF NOT EXISTS idx_problems_patent_id ON extracted_problems(patent_id);
+CREATE INDEX IF NOT EXISTS idx_opportunities_run_id ON startup_opportunities(run_id);
+CREATE INDEX IF NOT EXISTS idx_opportunities_problem_id ON startup_opportunities(problem_id);
+"""
+
+
+def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
+    """Create and configure a new SQLite database connection.
+
+    Args:
+        db_path: Path to SQLite database file. Defaults to config.settings.DATABASE_PATH.
+
+    Returns:
+        Configured sqlite3.Connection with Row factory, foreign keys, and WAL mode.
+    """
+    target_path = Path(db_path) if db_path else DATABASE_PATH
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(target_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    return conn
+
+
+@contextmanager
+def get_db(db_path: Optional[Path | str] = None) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for acquiring a database connection with auto-commit/rollback.
+
+    Yields:
+        sqlite3.Connection: Database connection.
+    """
+    conn = get_connection(db_path)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db(db_path: Optional[Path | str] = None) -> Path:
+    """Initialize the SQLite database file and execute the foundational schema.
+
+    Args:
+        db_path: Path to SQLite database file. Defaults to config.settings.DATABASE_PATH.
+
+    Returns:
+        Path to the initialized database file.
+    """
+    target_path = Path(db_path) if db_path else DATABASE_PATH
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with get_db(target_path) as conn:
+        conn.executescript(SCHEMA_DDL)
+
+    return target_path
+
+
+if __name__ == "__main__":
+    db_file = init_db()
+    print(f"Database successfully initialized at: {db_file}")
