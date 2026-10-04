@@ -7,6 +7,14 @@ from src.patents.epo_auth import (
     EPONetworkError,
     EPOResponseError,
 )
+from src.patents.epo_client import (
+    EPOClient,
+    EPOClientAuthenticationError,
+    EPOClientError,
+    EPOClientHTTPError,
+    EPOClientNetworkError,
+    EPOClientResponseError,
+)
 from src.patents.models import (
     PatentRecord,
     build_canonical_url,
@@ -28,6 +36,12 @@ __all__ = [
     "BasePatentClient",
     "EPOAuthClient",
     "EPOAuthError",
+    "EPOClient",
+    "EPOClientAuthenticationError",
+    "EPOClientError",
+    "EPOClientHTTPError",
+    "EPOClientNetworkError",
+    "EPOClientResponseError",
     "EPOHTTPError",
     "EPOMissingCredentialsError",
     "EPONetworkError",
