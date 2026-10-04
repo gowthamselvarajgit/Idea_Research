@@ -15,6 +15,11 @@ from src.patents.epo_client import (
     EPOClientNetworkError,
     EPOClientResponseError,
 )
+from src.patents.discovery_service import (
+    DiscoveryStats,
+    EPODiscoveryError,
+    EPODiscoveryService,
+)
 from src.patents.epo_parser import EPOParserError, parse_epo_search_response
 from src.patents.models import (
     PatentRecord,
@@ -24,6 +29,7 @@ from src.patents.models import (
     normalize_patent_number,
     validate_patent_number,
 )
+
 from src.patents.uspto_client import (
     USPTOClient,
     USPTOClientError,
@@ -35,6 +41,7 @@ from src.patents.uspto_client import (
 
 __all__ = [
     "BasePatentClient",
+    "DiscoveryStats",
     "EPOAuthClient",
     "EPOAuthError",
     "EPOClient",
@@ -43,6 +50,8 @@ __all__ = [
     "EPOClientHTTPError",
     "EPOClientNetworkError",
     "EPOClientResponseError",
+    "EPODiscoveryError",
+    "EPODiscoveryService",
     "EPOHTTPError",
     "EPOMissingCredentialsError",
     "EPONetworkError",
