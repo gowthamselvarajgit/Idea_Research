@@ -290,6 +290,151 @@ class TestProblemExtractionService(unittest.TestCase):
         result = self.service.extract_problem_for_patent("run-001", "US 11,223,344-B2")
         self.assertEqual(result.source_patent_numbers, ("US11223344B2",))
 
+    def test_extract_problems_for_run_with_multiple_patents(self) -> None:
+        """Verify that extract_problems_for_run retrieves patents exactly once and processes in order."""
+        patent1 = PatentRecord(
+            patent_number="IN202641114086A",
+            title="Pollution Monitoring Robot",
+            abstract="ESP32 based monitoring robot.",
+            filing_date="2024-01-10",
+            publication_date="2024-06-20",
+            assignee="Tech University",
+            source_url="https://ipindiaservices.gov.in/test1",
+        )
+        patent2 = PatentRecord(
+            patent_number="IN202641114195A",
+            title="Swarm Agriculture Monitoring System",
+            abstract="Swarm based monitoring system.",
+            filing_date="2024-02-15",
+            publication_date="2024-07-15",
+            assignee="AgriTech Labs",
+            source_url="https://ipindiaservices.gov.in/test2",
+        )
+        self.mock_patent_reader.get_patents_for_run.return_value = [patent1, patent2]
+
+        prob1 = ProblemRecord(
+            problem_title="Water pollution in closed drains",
+            problem_description="Manual inspection is hazardous.",
+            affected_users="Sanitation workers",
+            bottleneck_type="Access difficulty",
+            technical_domain="Robotics",
+            current_workaround="Manual rods",
+            problem_frequency="weekly",
+            problem_severity="high",
+            evidence_summary="Patent addresses drain inspection.",
+            evidence_confidence="high",
+            source_patent_numbers=("IN202641114086A",),
+        )
+        prob2 = ProblemRecord(
+            problem_title="Crop disease spread across large fields",
+            problem_description="Delayed detection destroys yield.",
+            affected_users="Farmers",
+            bottleneck_type="Scalable monitoring",
+            technical_domain="Agriculture",
+            current_workaround="Visual spot checks",
+            problem_frequency="daily",
+            problem_severity="critical",
+            evidence_summary="Patent details swarm drone surveillance.",
+            evidence_confidence="high",
+            source_patent_numbers=("IN202641114195A",),
+        )
+
+        with patch.object(self.service, "_extract_problem_from_record", side_effect=[prob1, prob2]) as mock_extract:
+            results = self.service.extract_problems_for_run("run-test-123")
+
+            # 1. get_patents_for_run called exactly once
+            self.mock_patent_reader.get_patents_for_run.assert_called_once_with("run-test-123")
+
+            # 2. Both patents passed directly into extraction helper
+            self.assertEqual(mock_extract.call_count, 2)
+            mock_extract.assert_any_call(target_patent=patent1, run_id="run-test-123")
+            mock_extract.assert_any_call(target_patent=patent2, run_id="run-test-123")
+
+            # 3. Order preserved and return values correct
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0], prob1)
+            self.assertEqual(results[1], prob2)
+
+    def test_extract_problems_for_run_fault_isolation(self) -> None:
+        """Verify that a failure on one patent does not abort extraction for remaining patents."""
+        patent1 = PatentRecord(
+            patent_number="IN202641114086A",
+            title="Pollution Monitoring Robot",
+            abstract="ESP32 based monitoring robot.",
+            filing_date="2024-01-10",
+            publication_date="2024-06-20",
+            assignee="Tech University",
+            source_url="https://ipindiaservices.gov.in/test1",
+        )
+        patent2 = PatentRecord(
+            patent_number="IN202641114195A",
+            title="Swarm Agriculture Monitoring System",
+            abstract="Swarm based monitoring system.",
+            filing_date="2024-02-15",
+            publication_date="2024-07-15",
+            assignee="AgriTech Labs",
+            source_url="https://ipindiaservices.gov.in/test2",
+        )
+        self.mock_patent_reader.get_patents_for_run.return_value = [patent1, patent2]
+
+        prob2 = ProblemRecord(
+            problem_title="Crop disease spread across large fields",
+            problem_description="Delayed detection destroys yield.",
+            affected_users="Farmers",
+            bottleneck_type="Scalable monitoring",
+            technical_domain="Agriculture",
+            current_workaround="Visual spot checks",
+            problem_frequency="daily",
+            problem_severity="critical",
+            evidence_summary="Patent details swarm drone surveillance.",
+            evidence_confidence="high",
+            source_patent_numbers=("IN202641114195A",),
+        )
+
+        # Patent 1 fails with AI error, Patent 2 succeeds
+        with patch.object(
+            self.service,
+            "_extract_problem_from_record",
+            side_effect=[ProblemExtractionAIError("AI CLI timed out"), prob2],
+        ) as mock_extract:
+            with self.assertLogs("src.problems.extraction_service", level="ERROR") as log_capture:
+                results = self.service.extract_problems_for_run("run-test-123")
+
+                # Both patents were attempted despite the first failing
+                self.assertEqual(mock_extract.call_count, 2)
+                mock_extract.assert_any_call(target_patent=patent1, run_id="run-test-123")
+                mock_extract.assert_any_call(target_patent=patent2, run_id="run-test-123")
+
+                # Successful patent returned
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0], prob2)
+
+                # Failure was logged with patent number and reason, not silently swallowed
+                log_output = "\n".join(log_capture.output)
+                self.assertIn("IN202641114086A", log_output)
+                self.assertIn("AI CLI timed out", log_output)
+
+    def test_extract_problems_for_run_empty_run(self) -> None:
+        """Verify that an empty run returns an empty list without attempting extraction."""
+        self.mock_patent_reader.get_patents_for_run.return_value = []
+
+        with patch.object(self.service, "_extract_problem_from_record") as mock_extract:
+            results = self.service.extract_problems_for_run("run-empty-001")
+
+            self.assertEqual(results, [])
+            mock_extract.assert_not_called()
+            self.mock_patent_reader.get_patents_for_run.assert_called_once_with("run-empty-001")
+
+    def test_extract_problems_for_run_invalid_run_id(self) -> None:
+        """Verify that invalid run_id values raise ProblemExtractionServiceError."""
+        invalid_ids = ["", "   ", None, 123, []]
+        for invalid in invalid_ids:
+            with self.subTest(invalid_run_id=invalid):
+                with self.assertRaises(ProblemExtractionServiceError):
+                    self.service.extract_problems_for_run(run_id=invalid)
+
+        self.mock_patent_reader.get_patents_for_run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

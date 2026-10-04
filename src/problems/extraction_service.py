@@ -71,6 +71,77 @@ class ProblemExtractionService:
         self.repository = actual_repo
         self.patent_reader = patent_reader
 
+    def _extract_problem_from_record(
+        self,
+        target_patent: PatentRecord,
+        run_id: str,
+    ) -> ProblemRecord:
+        """Internal helper executing prompt formatting, AI generation, parsing, and persistence.
+
+        Args:
+            target_patent: Resolved PatentRecord instance.
+            run_id: Associated research run identifier.
+
+        Returns:
+            ProblemRecord: Validated and persisted problem record.
+
+        Raises:
+            ProblemExtractionServiceError: If input conversion, prompt formatting, or parsing fails.
+            ProblemExtractionAIError: If AI generation fails.
+            ProblemExtractionPersistenceError: If repository persistence fails.
+        """
+        # 1. Convert PatentRecord using build_patent_extraction_input
+        try:
+            extraction_input = build_patent_extraction_input(target_patent)
+        except Exception as exc:
+            raise ProblemExtractionServiceError(
+                f"Failed to build patent extraction input for patent '{target_patent.patent_number}': {exc}"
+            ) from exc
+
+        # 2. Build the user prompt using format_patent_extraction_user_prompt
+        try:
+            user_prompt = format_patent_extraction_user_prompt(extraction_input)
+        except Exception as exc:
+            raise ProblemExtractionServiceError(
+                f"Failed to format extraction user prompt for patent '{target_patent.patent_number}': {exc}"
+            ) from exc
+
+        # 3. Use existing PROBLEM_EXTRACTION_SYSTEM_PROMPT
+        system_prompt = PROBLEM_EXTRACTION_SYSTEM_PROMPT
+
+        # 4. Call the injected AI client exactly once
+        try:
+            raw_response = self.ai_client.generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except Exception as exc:
+            raise ProblemExtractionAIError(
+                f"AI problem extraction failed for patent '{target_patent.patent_number}': {exc}"
+            ) from exc
+
+        # 5. Parse the response using parse_problem_extraction_output
+        try:
+            problem_record = parse_problem_extraction_output(
+                response_text=raw_response,
+                source_patent_numbers=(target_patent.patent_number,),
+            )
+        except Exception as exc:
+            raise ProblemExtractionServiceError(
+                f"Failed to parse extraction output for patent '{target_patent.patent_number}': {exc}"
+            ) from exc
+
+        # 6. Persist the resulting ProblemRecord using ProblemRepository.save_problem
+        try:
+            self.repository.save_problem(problem=problem_record, run_id=run_id)
+        except Exception as exc:
+            raise ProblemExtractionPersistenceError(
+                f"Failed to persist extracted problem for patent '{target_patent.patent_number}': {exc}"
+            ) from exc
+
+        # 7. Return the validated ProblemRecord
+        return problem_record
+
     def extract_problem_for_patent(self, run_id: str, patent_id: str) -> ProblemRecord:
         """Extract a problem from a single persisted patent and save it to the current run.
 
@@ -78,13 +149,8 @@ class ProblemExtractionService:
             1. Validate run_id and patent_id.
             2. Retrieve the requested patent from the research run using ResearchRunPatentReader.
             3. If the patent is not part of the run, raise PatentNotInRunError.
-            4. Convert PatentRecord using build_patent_extraction_input.
-            5. Build user prompt using format_patent_extraction_user_prompt.
-            6. Use PROBLEM_EXTRACTION_SYSTEM_PROMPT.
-            7. Call injected AI client exactly once.
-            8. Parse response using parse_problem_extraction_output.
-            9. Persist ProblemRecord using ProblemRepository.save_problem.
-            10. Return validated ProblemRecord.
+            4. Delegate extraction and persistence to _extract_problem_from_record.
+            5. Return validated ProblemRecord.
 
         Args:
             run_id: Unique research run identifier.
@@ -147,54 +213,58 @@ class ProblemExtractionService:
                 f"Patent '{patent_id}' is not associated with research run '{clean_run_id}'."
             )
 
-        # d. Convert PatentRecord using build_patent_extraction_input
+        return self._extract_problem_from_record(target_patent, clean_run_id)
+
+    def extract_problems_for_run(self, run_id: str) -> list[ProblemRecord]:
+        """Extract and persist real-world problems from all patents collected by a research run.
+
+        Patents are queried from the reader exactly once. Each patent is processed sequentially
+        with per-patent failure isolation: if extraction fails for a given patent, the error is
+        logged, and the remaining patents continue processing.
+
+        Args:
+            run_id: Identifier of the research run.
+
+        Returns:
+            A list of successfully extracted and persisted ProblemRecord objects in extraction order.
+
+        Raises:
+            ProblemExtractionServiceError: If run_id is invalid or initial patent retrieval fails.
+        """
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ProblemExtractionServiceError("run_id must be a non-empty string.")
+
+        clean_run_id = run_id.strip()
+
         try:
-            extraction_input = build_patent_extraction_input(target_patent)
+            run_patents = self.patent_reader.get_patents_for_run(clean_run_id)
         except Exception as exc:
             raise ProblemExtractionServiceError(
-                f"Failed to build patent extraction input for patent '{target_patent.patent_number}': {exc}"
+                f"Failed to retrieve patents for run '{clean_run_id}': {exc}"
             ) from exc
 
-        # e. Build the user prompt using format_patent_extraction_user_prompt
-        try:
-            user_prompt = format_patent_extraction_user_prompt(extraction_input)
-        except Exception as exc:
-            raise ProblemExtractionServiceError(
-                f"Failed to format extraction user prompt for patent '{target_patent.patent_number}': {exc}"
-            ) from exc
+        extracted_problems: list[ProblemRecord] = []
+        for patent in run_patents:
+            pat_num = getattr(patent, "patent_number", "unknown")
+            try:
+                problem = self._extract_problem_from_record(
+                    target_patent=patent,
+                    run_id=clean_run_id,
+                )
+                extracted_problems.append(problem)
+            except ProblemExtractionServiceError as exc:
+                logger.error(
+                    "Problem extraction failed for patent '%s' in run '%s': %s",
+                    pat_num,
+                    clean_run_id,
+                    exc,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Unexpected error during problem extraction for patent '%s' in run '%s': %s",
+                    pat_num,
+                    clean_run_id,
+                    exc,
+                )
 
-        # f. Use existing PROBLEM_EXTRACTION_SYSTEM_PROMPT
-        system_prompt = PROBLEM_EXTRACTION_SYSTEM_PROMPT
-
-        # g. Call the injected AI client exactly once
-        try:
-            raw_response = self.ai_client.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-            )
-        except Exception as exc:
-            raise ProblemExtractionAIError(
-                f"AI problem extraction failed for patent '{target_patent.patent_number}': {exc}"
-            ) from exc
-
-        # h. Parse the response using parse_problem_extraction_output
-        try:
-            problem_record = parse_problem_extraction_output(
-                response_text=raw_response,
-                source_patent_numbers=(target_patent.patent_number,),
-            )
-        except Exception as exc:
-            raise ProblemExtractionServiceError(
-                f"Failed to parse extraction output for patent '{target_patent.patent_number}': {exc}"
-            ) from exc
-
-        # i. Persist the resulting ProblemRecord using ProblemRepository.save_problem
-        try:
-            self.repository.save_problem(problem=problem_record, run_id=clean_run_id)
-        except Exception as exc:
-            raise ProblemExtractionPersistenceError(
-                f"Failed to persist extracted problem for patent '{target_patent.patent_number}': {exc}"
-            ) from exc
-
-        # j. Return the validated ProblemRecord
-        return problem_record
+        return extracted_problems

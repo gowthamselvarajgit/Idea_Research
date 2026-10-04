@@ -271,6 +271,38 @@ class InPassPatentRecord:
         """Convenience property returning primary applicant name."""
         return self.applicants[0].name if self.applicants else None
 
+    @property
+    def canonical_patent_number(self) -> str:
+        """Normalized canonical publication-level patent identifier (e.g. 'IN202641109752A')."""
+        clean_app = clean_patent_string(self.application_number)
+        if clean_app.startswith("IN") and len(clean_app) > 3 and clean_app[-1].isalpha():
+            return clean_app
+        return f"IN{clean_app}A"
+
+    def to_patent_record(self) -> "PatentRecord":
+        """Convert InPassPatentRecord to a canonical PatentRecord for repository persistence."""
+        merged_raw = dict(self.raw_data)
+        merged_raw.update({
+            "application_number": self.application_number,
+            "publication_number": self.publication_number,
+            "ipc": self.ipc,
+            "applicants": [app.to_dict() for app in self.applicants],
+            "inventors": [inv.to_dict() for inv in self.inventors],
+            "specification": self.specification,
+            "claims": self.claims,
+            "source": self.source,
+        })
+        return PatentRecord(
+            patent_number=self.canonical_patent_number,
+            title=self.title or "Untitled",
+            abstract=self.abstract,
+            filing_date=self.filing_date,
+            publication_date=self.publication_date,
+            assignee=self.assignee,
+            source_url=self.source_url,
+            raw_data=merged_raw,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize InPassPatentRecord to a standard dictionary."""
         return {

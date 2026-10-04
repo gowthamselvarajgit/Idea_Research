@@ -1,0 +1,34 @@
+{
+  "run_id": "9a4ed95f-84a1-4d9f-a5ab-ce3650d2337f",
+  "theme": "WATER",
+  "generated_queries": [
+    "WATER MONITORING"
+  ],
+  "executed_queries": [
+    "WATER MONITORING"
+  ],
+  "discovered_count": 26,
+  "ingested_count": 2,
+  "inserted_count": 2,
+  "existing_count": 0,
+  "linked_count": 2,
+  "final_run_status": "completed",
+  "error": null,
+  "patents": [
+    {
+      "application_number": "202641114086",
+      "title": "DESIGN AND IMPLEMENTATION OF ESP-32 BASED POLLUTION MONITORING AND CONTROLLING ROBOT",
+      "abstract_length": 897,
+      "specification_length": 3327,
+      "claims_length": 2559
+    },
+    {
+      "application_number": "202641114195",
+      "title": "SWARM-BASED AGRICULTURE MONITORING SYSTEM (SAMS)",
+      "abstract_length": 1188,
+      "specification_length": 1085,
+      "claims_length": 566
+    }
+  ],
+  "passed": true
+}

@@ -21,8 +21,39 @@ from src.patents.discovery_service import (
     EPODiscoveryService,
 )
 from src.patents.epo_parser import EPOParserError, parse_epo_search_response
+from src.patents.inpass_client import (
+    InPassBrowserError,
+    InPassCaptchaTimeoutError,
+    InPassClient,
+    InPassClientError,
+    InPassNavigationError,
+    InPassSearchConfig,
+    InPassSearchError,
+    InPassSearchResultRow,
+)
+from src.patents.inpass_ingestion_service import (
+    InPassIngestionError,
+    InPassIngestionPersistenceError,
+    InPassIngestionResult,
+    InPassIngestionSearchError,
+    InPassIngestionService,
+)
+from src.patents.discovery_strategy import (
+    BasePatentQueryGenerator,
+    DeterministicPatentQueryGenerator,
+    InPassDiscoveryResult,
+    InPassDiscoveryStrategy,
+)
+from src.patents.inpass_parser import (
+    InPassParserError,
+    parse_inpass_details,
+    parse_inpass_patent_details,
+)
 from src.patents.models import (
+    IndianPatentRecord,
+    InPassPatentRecord,
     PatentRecord,
+    PersonOrOrganization,
     build_canonical_url,
     is_valid_patent_number,
     normalize_patent_components,
@@ -30,26 +61,10 @@ from src.patents.models import (
     validate_patent_number,
 )
 
-from src.patents.ingestion_service import (
-    EPOIngestionDiscoveryError,
-    EPOIngestionError,
-    EPOIngestionRepositoryError,
-    EPOIngestionService,
-    IngestionResult,
-)
-from src.patents.repository import PatentRepository
-from src.patents.run_reader import ResearchRunPatentReader
-from src.patents.uspto_client import (
-    USPTOClient,
-    USPTOClientError,
-    USPTOHTTPError,
-    USPTOMissingAPIKeyError,
-    USPTONetworkError,
-    USPTOResponseError,
-)
-
 __all__ = [
     "BasePatentClient",
+    "BasePatentQueryGenerator",
+    "DeterministicPatentQueryGenerator",
     "DiscoveryStats",
     "EPOAuthClient",
     "EPOAuthError",
@@ -70,10 +85,29 @@ __all__ = [
     "EPONetworkError",
     "EPOParserError",
     "EPOResponseError",
+    "IndianPatentRecord",
     "IngestionResult",
+    "InPassBrowserError",
+    "InPassCaptchaTimeoutError",
+    "InPassClient",
+    "InPassClientError",
+    "InPassDiscoveryResult",
+    "InPassDiscoveryStrategy",
+    "InPassIngestionError",
+    "InPassIngestionPersistenceError",
+    "InPassIngestionResult",
+    "InPassIngestionSearchError",
+    "InPassIngestionService",
+    "InPassNavigationError",
+    "InPassParserError",
+    "InPassPatentRecord",
+    "InPassSearchConfig",
+    "InPassSearchError",
+    "InPassSearchResultRow",
     "PatentClientError",
     "PatentRecord",
     "PatentRepository",
+    "PersonOrOrganization",
     "ResearchRunPatentReader",
     "USPTOClient",
     "USPTOClientError",
@@ -86,6 +120,8 @@ __all__ = [
     "normalize_patent_components",
     "normalize_patent_number",
     "parse_epo_search_response",
+    "parse_inpass_details",
+    "parse_inpass_patent_details",
     "validate_patent_number",
 ]
 
