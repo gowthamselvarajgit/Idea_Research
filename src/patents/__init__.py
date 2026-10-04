@@ -1,4 +1,12 @@
 from src.patents.base_client import BasePatentClient, PatentClientError
+from src.patents.epo_auth import (
+    EPOAuthClient,
+    EPOAuthError,
+    EPOHTTPError,
+    EPOMissingCredentialsError,
+    EPONetworkError,
+    EPOResponseError,
+)
 from src.patents.models import (
     PatentRecord,
     build_canonical_url,
@@ -18,6 +26,12 @@ from src.patents.uspto_client import (
 
 __all__ = [
     "BasePatentClient",
+    "EPOAuthClient",
+    "EPOAuthError",
+    "EPOHTTPError",
+    "EPOMissingCredentialsError",
+    "EPONetworkError",
+    "EPOResponseError",
     "PatentClientError",
     "PatentRecord",
     "USPTOClient",
@@ -32,4 +46,5 @@ __all__ = [
     "normalize_patent_number",
     "validate_patent_number",
 ]
+
 
