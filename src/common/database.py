@@ -118,7 +118,23 @@ CREATE TABLE IF NOT EXISTS opportunity_evaluations (
     FOREIGN KEY (opportunity_id) REFERENCES startup_opportunities(id) ON DELETE CASCADE
 );
 
--- Indexes for efficient queries across runs, patents, problems, opportunities, and evaluations
+-- Market Research Findings: stores verified competitive intelligence and market evidence
+CREATE TABLE IF NOT EXISTS market_research_findings (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    company_or_product TEXT NOT NULL,
+    finding TEXT NOT NULL,
+    evidence_summary TEXT NOT NULL,
+    relevance TEXT NOT NULL,
+    raw_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (opportunity_id) REFERENCES startup_opportunities(id) ON DELETE CASCADE
+);
+
+-- Indexes for efficient queries across runs, patents, problems, opportunities, evaluations, and market research
 CREATE INDEX IF NOT EXISTS idx_patents_patent_number ON patents(patent_number);
 CREATE INDEX IF NOT EXISTS idx_run_patents_run_id ON run_patents(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_patents_patent_id ON run_patents(patent_id);
@@ -129,6 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_startup_opportunities_run_id ON startup_opportuni
 CREATE INDEX IF NOT EXISTS idx_opportunity_problems_opp_id ON opportunity_problems(opportunity_id);
 CREATE INDEX IF NOT EXISTS idx_opportunity_problems_prob_id ON opportunity_problems(problem_id);
 CREATE INDEX IF NOT EXISTS idx_opportunity_evaluations_opp_id ON opportunity_evaluations(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_market_research_findings_opp_id ON market_research_findings(opportunity_id);
 """
 
 
