@@ -31,6 +31,24 @@ from src.market_research.research_prompt import (
     MARKET_RESEARCH_SYSTEM_PROMPT,
     format_market_research_user_prompt,
 )
+from src.market_research.search_client import (
+    SearchClient,
+    SearchClientError,
+    SearchProvider,
+    SearchProviderError,
+    SearchQueryValidationError,
+    search,
+)
+from src.market_research.search_contract import (
+    REQUIRED_SEARCH_RESULT_FIELDS,
+    SearchResultContractValidationError,
+    validate_search_result_contract,
+    validate_search_result_payload,
+    validate_search_result_record,
+)
+from src.market_research.search_models import (
+    SearchResult,
+)
 from src.market_research.service import (
     InvalidOpportunityError,
     MarketResearchAIError,
@@ -86,7 +104,15 @@ __all__ = [
     "OpportunityIdMismatchError",
     "OpportunityNotFoundError",
     "REQUIRED_MARKET_RESEARCH_FIELDS",
+    "REQUIRED_SEARCH_RESULT_FIELDS",
     "REQUIRED_SOURCE_FIELDS",
+    "SearchClient",
+    "SearchClientError",
+    "SearchProvider",
+    "SearchProviderError",
+    "SearchQueryValidationError",
+    "SearchResult",
+    "SearchResultContractValidationError",
     "SourceCollectionFailure",
     "SourceCollectionResult",
     "WebResearchSource",
@@ -102,9 +128,13 @@ __all__ = [
     "fetch_source",
     "format_market_research_user_prompt",
     "parse_market_research_output",
+    "search",
     "validate_market_research_contract",
     "validate_market_research_payload",
     "validate_market_research_record",
+    "validate_search_result_contract",
+    "validate_search_result_payload",
+    "validate_search_result_record",
     "validate_web_research_source_contract",
     "validate_web_research_source_payload",
     "validate_web_research_source_record",
