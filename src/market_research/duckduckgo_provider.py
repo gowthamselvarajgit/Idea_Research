@@ -348,16 +348,19 @@ class DuckDuckGoHTMLSearchProvider:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     encoding = resp.headers.get_content_charset() or "utf-8"
                     html_content = resp.read().decode(encoding, errors="replace")
-                    # If DuckDuckGo challenged with HTTP 202, warm session from home page and retry once
+                    # If DuckDuckGo challenged with HTTP 202, retry with fresh request object
                     if getattr(resp, "status", 200) == 202 and "result__a" not in html_content:
                         try:
-                            home_req = urllib.request.Request(
-                                "https://duckduckgo.com/",
-                                headers={"User-Agent": self.user_agent},
+                            time.sleep(1.0)
+                            retry_headers = dict(headers)
+                            retry_headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0"
+                            retry_req = urllib.request.Request(
+                                url=self.endpoint,
+                                data=post_data,
+                                headers=retry_headers,
+                                method="POST",
                             )
-                            with urllib.request.urlopen(home_req, timeout=self.timeout):
-                                pass
-                            with urllib.request.urlopen(req, timeout=self.timeout) as retry_resp:
+                            with urllib.request.urlopen(retry_req, timeout=self.timeout) as retry_resp:
                                 retry_enc = retry_resp.headers.get_content_charset() or "utf-8"
                                 html_content = retry_resp.read().decode(retry_enc, errors="replace")
                         except Exception as retry_err:

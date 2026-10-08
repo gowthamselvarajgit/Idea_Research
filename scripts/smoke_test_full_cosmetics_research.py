@@ -21,6 +21,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+import time
 from typing import Any, Callable, Optional
 import uuid
 
@@ -109,6 +110,25 @@ class HumanInTheLoopInPassDiscoveryStrategy(InPassDiscoveryStrategy):
         return super().discover_for_run(*args, **kwargs)
 
 
+class TrackingSearchSourceCollector(SearchSourceCollector):
+    """SearchSourceCollector recording per-query search and retrieval metrics."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.query_telemetry: list[dict[str, Any]] = []
+
+    def collect_for_query(self, query: str, max_results: int = 5):
+        time.sleep(1.0)
+        res = super().collect_for_query(query=query, max_results=max_results)
+        self.query_telemetry.append({
+            "query": query,
+            "search_results_count": len(res.search_results),
+            "sources_count": len(res.sources),
+            "failures_count": len(res.failures),
+        })
+        return res
+
+
 def run_full_cosmetics_research_smoke_test() -> ResearchOrchestrationResult:
     """Execute the end-to-end generic research pipeline for COSMETICS_RESEARCH_CONFIG."""
     print("=" * 80, flush=True)
@@ -182,10 +202,10 @@ def run_full_cosmetics_research_smoke_test() -> ResearchOrchestrationResult:
     print("[Stage 5 Setup] Initializing ResearchQueryGenerator...", flush=True)
     query_generator = ResearchQueryGenerator()
 
-    # 9. Instantiate Stage 6: DuckDuckGo Search Source Collector
-    print("[Stage 6 Setup] Initializing DuckDuckGoHTMLSearchProvider & SearchSourceCollector...", flush=True)
+    # 9. Instantiate Stage 6: DuckDuckGo Search Source Collector with telemetry tracking
+    print("[Stage 6 Setup] Initializing DuckDuckGoHTMLSearchProvider & TrackingSearchSourceCollector...", flush=True)
     ddg_provider = DuckDuckGoHTMLSearchProvider()
-    search_collector = SearchSourceCollector(search_provider=ddg_provider)
+    search_collector = TrackingSearchSourceCollector(search_provider=ddg_provider)
 
     # 10. Instantiate Stage 7: Market Research AI Service & Web Evidence Analyzer
     print("[Stage 7 Setup] Initializing MarketResearchService & WebEvidenceAnalyzer...", flush=True)
@@ -210,74 +230,100 @@ def run_full_cosmetics_research_smoke_test() -> ResearchOrchestrationResult:
         db_path=isolated_db_path,
     )
 
-    # 12. Execute controlled research pipeline
+    # 12. Execute controlled research pipeline (depth: 7 queries across all categories, 3 results per query)
     print("\n" + "-" * 80, flush=True)
-    print("Executing Research Pipeline (Controlled: 1 patent query, 1 patent result, 1 web query, 2 web results)...", flush=True)
+    print("Executing Research Pipeline (Depth: 1 patent query, 1 patent result, 7 web queries across all categories, 3 results/query)...", flush=True)
     print("-" * 80 + "\n", flush=True)
 
-    result = orchestrator.run_research(
-        domain_config=COSMETICS_RESEARCH_CONFIG,
-        max_patent_queries=1,
-        max_patents_per_query=1,
-        max_web_queries=1,
-        max_web_results_per_query=2,
-        raise_on_major_failure=True,
-    )
+    try:
+        result = orchestrator.run_research(
+            domain_config=COSMETICS_RESEARCH_CONFIG,
+            max_patent_queries=1,
+            max_patents_per_query=1,
+            max_web_queries=7,
+            max_web_results_per_query=3,
+            raise_on_major_failure=True,
+        )
 
-    # 13. Verify internal consistency of ResearchOrchestrationResult
-    print("\n" + "-" * 80, flush=True)
-    print("Validating Result Consistency...", flush=True)
-    print("-" * 80, flush=True)
+        # 13. Verify internal consistency of ResearchOrchestrationResult
+        print("\n" + "-" * 80, flush=True)
+        print("Validating Result Consistency...", flush=True)
+        print("-" * 80, flush=True)
 
-    assert isinstance(result, ResearchOrchestrationResult), "Result must be a ResearchOrchestrationResult instance."
-    assert result.status == "completed", f"Status must be 'completed', got {result.status}"
-    assert result.error is None, f"Expected no error, got: {result.error}"
-    assert result.is_success, "Result is_success must be True."
-    assert result.domain_config == COSMETICS_RESEARCH_CONFIG, "Domain config must match."
-    assert result.problem_count == len(result.extracted_problems), "problem_count mismatch."
-    assert result.opportunity_count == len(result.synthesized_opportunities), "opportunity_count mismatch."
-    assert result.evaluation_count == len(result.opportunity_evaluations), "evaluation_count mismatch."
-    assert result.query_count == len(result.generated_search_queries), "query_count mismatch."
-    assert result.web_source_count == len(result.collected_web_sources), "web_source_count mismatch."
-    assert result.web_failure_count == len(result.web_collection_failures), "web_failure_count mismatch."
-    assert result.market_finding_count == len(result.market_research_findings), "market_finding_count mismatch."
-    print("All internal consistency checks PASSED!", flush=True)
+        assert isinstance(result, ResearchOrchestrationResult), "Result must be a ResearchOrchestrationResult instance."
+        assert result.status == "completed", f"Status must be 'completed', got {result.status}"
+        assert result.error is None, f"Expected no error, got: {result.error}"
+        assert result.is_success, "Result is_success must be True."
+        assert result.domain_config == COSMETICS_RESEARCH_CONFIG, "Domain config must match."
+        assert result.problem_count == len(result.extracted_problems), "problem_count mismatch."
+        assert result.opportunity_count == len(result.synthesized_opportunities), "opportunity_count mismatch."
+        assert result.evaluation_count == len(result.opportunity_evaluations), "evaluation_count mismatch."
+        assert result.query_count == len(result.generated_search_queries), "query_count mismatch."
+        assert result.web_source_count == len(result.collected_web_sources), "web_source_count mismatch."
+        assert result.web_failure_count == len(result.web_collection_failures), "web_failure_count mismatch."
+        assert result.market_finding_count == len(result.market_research_findings), "market_finding_count mismatch."
+        print("All internal consistency checks PASSED!", flush=True)
 
-    # 14. Print concise structured summary
-    print("\n" + "=" * 80, flush=True)
-    print("RESEARCH PIPELINE EXECUTION SUMMARY", flush=True)
-    print("=" * 80, flush=True)
-    print(f"1. Research run ID: {result.run_id}")
-    discovered_count = result.patent_research_result.discovered_count if result.patent_research_result else 0
-    print(f"2. Number of patents discovered: {discovered_count}")
-    print(f"3. Number of problems extracted: {result.problem_count}")
-    print(f"4. Number of opportunities synthesized: {result.opportunity_count}")
-    print(f"5. Number of opportunities evaluated: {result.evaluation_count}")
-    print(f"6. Number of web queries generated: {result.query_count}")
-    print(f"7. Number of web sources collected: {result.web_source_count}")
-    print(f"8. Number of collection failures: {result.web_failure_count}")
-    print(f"9. Number of market research findings generated: {result.market_finding_count}")
+        # 14. Print detailed per-query search telemetry
+        print("\n" + "=" * 80, flush=True)
+        print("WEB MARKET RESEARCH QUERY TELEMETRY (7 CATEGORIES)", flush=True)
+        print("=" * 80, flush=True)
+        for idx, item in enumerate(search_collector.query_telemetry, 1):
+            print(f"[{idx}] Query: '{item['query']}'")
+            print(f"    - Search results discovered: {item['search_results_count']}")
+            print(f"    - Successfully fetched sources: {item['sources_count']}")
+            print(f"    - Failed sources: {item['failures_count']}")
 
-    print("\n10. Titles of generated opportunities:")
-    if result.synthesized_opportunities:
-        for idx, opp in enumerate(result.synthesized_opportunities, 1):
-            print(f"    [{idx}] {opp.opportunity_title}")
-    else:
-        print("    (None)")
+        # 15. Print concise structured summary
+        print("\n" + "=" * 80, flush=True)
+        print("RESEARCH PIPELINE EXECUTION SUMMARY", flush=True)
+        print("=" * 80, flush=True)
+        print(f"1. Research run ID: {result.run_id}")
+        discovered_count = result.patent_research_result.discovered_count if result.patent_research_result else 0
+        print(f"2. Number of patents discovered: {discovered_count}")
+        print(f"3. Number of problems extracted: {result.problem_count}")
+        print(f"4. Number of opportunities synthesized: {result.opportunity_count}")
+        print(f"5. Number of opportunities evaluated: {result.evaluation_count}")
+        print(f"6. Number of web queries generated: {result.query_count}")
+        print(f"7. Total unique web sources collected: {result.web_source_count}")
+        print(f"8. Total collection failures: {result.web_failure_count}")
+        print(f"9. Number of AI market research findings: {result.market_finding_count}")
 
-    print("\n11. Evaluation recommendation/score for each opportunity:")
-    if result.opportunity_evaluations:
-        for idx, ev in enumerate(result.opportunity_evaluations, 1):
-            print(f"    [{idx}] Opportunity ID: {ev.opportunity_id}")
-            print(f"        Overall Score: {ev.overall_score} / 100")
-            print(f"        Recommendation: {ev.recommendation.upper()}")
-            if ev.rationale:
-                print(f"        Rationale: {ev.rationale[:120]}...")
-    else:
-        print("    (None)")
+        print("\n10. Titles of generated opportunities:")
+        if result.synthesized_opportunities:
+            for idx, opp in enumerate(result.synthesized_opportunities, 1):
+                print(f"    [{idx}] {opp.opportunity_title}")
+        else:
+            print("    (None)")
 
-    print("=" * 80, flush=True)
-    return result
+        print("\n11. Evaluation recommendation/score for each opportunity:")
+        if result.opportunity_evaluations:
+            for idx, ev in enumerate(result.opportunity_evaluations, 1):
+                print(f"    [{idx}] Opportunity ID: {ev.opportunity_id}")
+                print(f"        Overall Score: {ev.overall_score} / 100")
+                print(f"        Recommendation: {ev.recommendation.upper()}")
+                if ev.rationale:
+                    print(f"        Rationale: {ev.rationale[:140]}...")
+        else:
+            print("    (None)")
+
+        print("\n12. AI Market Research Findings (Source / Company / Product & Relevance):")
+        if result.market_research_findings:
+            for idx, finding in enumerate(result.market_research_findings, 1):
+                print(f"    [{idx}] Company / Product: {finding.company_or_product}")
+                print(f"        Source: {finding.source_name} ({finding.source_type})")
+                print(f"        URL: {finding.source_url}")
+                print(f"        Relevance: {finding.relevance}")
+                print(f"        Key Insight: {finding.finding}")
+                if finding.evidence_summary:
+                    print(f"        Evidence Summary: {finding.evidence_summary[:140]}...")
+        else:
+            print("    (None)")
+
+        print("=" * 80, flush=True)
+        return result
+    finally:
+        inpass_client.close_browser()
 
 
 if __name__ == "__main__":
