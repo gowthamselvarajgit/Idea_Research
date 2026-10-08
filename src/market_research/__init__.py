@@ -103,6 +103,15 @@ from src.market_research.web_source_client import (
     WebSourceNetworkError,
     fetch_source,
 )
+from src.market_research.web_evidence_analyzer import (
+    InvalidOpportunityIdError,
+    WebEvidenceAnalyzer,
+    WebEvidenceAnalyzerError,
+    analyze_web_sources,
+    format_web_source_evidence,
+    format_web_sources_evidence,
+)
+
 
 __all__ = [
     "ALLOWED_RELEVANCE",
@@ -115,6 +124,7 @@ __all__ = [
     "DuckDuckGoTimeoutError",
     "GeneratedResearchQueries",
     "InvalidOpportunityError",
+    "InvalidOpportunityIdError",
     "MARKET_RESEARCH_CONTRACT_PRINCIPLES",
     "MARKET_RESEARCH_SYSTEM_PROMPT",
     "MarketResearchAIError",
@@ -147,6 +157,8 @@ __all__ = [
     "SearchSourceCollectorError",
     "SourceCollectionFailure",
     "SourceCollectionResult",
+    "WebEvidenceAnalyzer",
+    "WebEvidenceAnalyzerError",
     "WebResearchSource",
     "WebResearchSourceContractValidationError",
     "WebSourceClient",
@@ -156,11 +168,15 @@ __all__ = [
     "WebSourceHTTPError",
     "WebSourceInvalidURLError",
     "WebSourceNetworkError",
+    "analyze_web_sources",
     "collect_sources",
     "collect_sources_for_search_query",
     "fetch_source",
     "format_market_research_user_prompt",
+    "format_web_source_evidence",
+    "format_web_sources_evidence",
     "generate_research_queries",
+
     "parse_market_research_output",
     "search",
     "validate_market_research_contract",

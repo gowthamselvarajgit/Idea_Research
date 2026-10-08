@@ -55,13 +55,29 @@ def parse_market_research_output(
             "JSON parsing failure: AI market research output is empty or whitespace."
         )
 
-    # 1. Parse JSON safely without repairing malformed text
+    # 1. Parse JSON safely
     try:
         data = json.loads(clean_text)
     except (json.JSONDecodeError, UnicodeDecodeError) as err:
-        raise MarketResearchOutputParseError(
-            f"JSON parsing failure: malformed JSON in AI response: {err}"
-        ) from err
+        if clean_text.startswith("```"):
+            lines = clean_text.splitlines()
+            if len(lines) >= 2 and lines[-1].strip().startswith("```"):
+                inner = "\n".join(lines[1:-1]).strip()
+                try:
+                    data = json.loads(inner)
+                except Exception:
+                    raise MarketResearchOutputParseError(
+                        f"JSON parsing failure: malformed JSON in AI response: {err}"
+                    ) from err
+            else:
+                raise MarketResearchOutputParseError(
+                    f"JSON parsing failure: malformed JSON in AI response: {err}"
+                ) from err
+        else:
+            raise MarketResearchOutputParseError(
+                f"JSON parsing failure: malformed JSON in AI response: {err}"
+            ) from err
+
 
     # 2. Extract list of findings
     if isinstance(data, list):

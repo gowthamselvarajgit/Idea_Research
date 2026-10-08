@@ -51,7 +51,24 @@ Follow these strict investigation principles:
    - Focus on concrete findings that can be verified and evaluated.
    - Highlight direct competitor features, pricing friction, technical limitations, and unaddressed user segments.
    - Rate findings by relevance (HIGH = decisive direct competitor/pain point, MEDIUM = adjacent player/trend, LOW = contextual background).
+
+7. STRICT OUTPUT FORMAT:
+   - Return ONLY a valid JSON array of findings (or a JSON object with a "findings" list).
+   - Do NOT wrap in Markdown code blocks (no ```json or ```).
+   - Do NOT include any introductory or concluding text outside the JSON.
+   - Each finding object must contain EXACTLY these 8 keys:
+     {
+       "opportunity_id": "Exact ID of the researched opportunity",
+       "source_type": "competitor_site | industry_report | news | review_forum | official | other",
+       "source_name": "Name of publication, platform, or source organization",
+       "source_url": "Direct URL or citation reference",
+       "company_or_product": "Name of existing company, product, or solution discovered",
+       "finding": "Concrete finding or key market insight",
+       "evidence_summary": "Factual summary of the collected market evidence",
+       "relevance": "HIGH | MEDIUM | LOW"
+     }
 """
+
 
 
 def format_market_research_user_prompt(
@@ -149,7 +166,9 @@ def format_market_research_user_prompt(
         "- ZERO FABRICATION: Do NOT invent companies, products, URLs, statistics, TAM numbers, or user reviews.\n"
         "- EPISTEMIC CLARITY: Explicitly categorize findings as (1) Known Facts, (2) Evidence Needing Verification, or (3) Hypotheses/Inferences.\n"
         "- PROBLEM FOCUS: The patent is only a lead; focus on the underlying customer problem, not patent claims.\n"
-        "- COMPETITION PERSPECTIVE: Competition validates demand; an existing competitor does not mean automatic rejection."
+        "- COMPETITION PERSPECTIVE: Competition validates demand; an existing competitor does not mean automatic rejection.\n"
+        f"- OUTPUT FORMAT: Return ONLY a valid JSON array of findings with opportunity_id='{opp_id}'."
     )
+
 
     return "\n".join(sections)

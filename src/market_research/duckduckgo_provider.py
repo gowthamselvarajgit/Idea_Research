@@ -6,6 +6,7 @@ executing queries against the DuckDuckGo HTML endpoint and extracting structured
 
 from html.parser import HTMLParser
 import html
+import http.cookiejar
 import logging
 import socket
 from typing import Any, Callable, Optional, Sequence
@@ -292,6 +293,13 @@ class DuckDuckGoHTMLSearchProvider:
         self.user_agent = user_agent.strip()
         self.timeout = float(timeout)
         self.http_transport = http_transport
+        # Ensure default urllib opener is cookie-aware for DDG bot challenge handling
+        try:
+            cj = http.cookiejar.CookieJar()
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+            urllib.request.install_opener(opener)
+        except Exception:
+            pass
 
     def search(self, query: str, max_results: int) -> Sequence[SearchResult]:
         """Execute a search query against DuckDuckGo HTML and return parsed SearchResult objects.
@@ -340,6 +348,22 @@ class DuckDuckGoHTMLSearchProvider:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     encoding = resp.headers.get_content_charset() or "utf-8"
                     html_content = resp.read().decode(encoding, errors="replace")
+                    # If DuckDuckGo challenged with HTTP 202, warm session from home page and retry once
+                    if getattr(resp, "status", 200) == 202 and "result__a" not in html_content:
+                        try:
+                            home_req = urllib.request.Request(
+                                "https://duckduckgo.com/",
+                                headers={"User-Agent": self.user_agent},
+                            )
+                            with urllib.request.urlopen(home_req, timeout=self.timeout):
+                                pass
+                            with urllib.request.urlopen(req, timeout=self.timeout) as retry_resp:
+                                retry_enc = retry_resp.headers.get_content_charset() or "utf-8"
+                                html_content = retry_resp.read().decode(retry_enc, errors="replace")
+                        except Exception as retry_err:
+                            logger.debug("DDG retry after 202 challenge failed: %s", retry_err)
+
+
         except urllib.error.HTTPError as exc:
             logger.error("DuckDuckGo HTTP error %s for query '%s'", exc.code, clean_query)
             raise DuckDuckGoHTTPError(
