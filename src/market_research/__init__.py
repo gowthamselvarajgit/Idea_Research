@@ -38,6 +38,13 @@ from src.market_research.research_prompt import (
     MARKET_RESEARCH_SYSTEM_PROMPT,
     format_market_research_user_prompt,
 )
+from src.market_research.research_query_generator import (
+    DEFAULT_RESEARCH_CATEGORIES,
+    GeneratedResearchQueries,
+    ResearchQueryGenerator,
+    ResearchQueryItem,
+    generate_research_queries,
+)
 from src.market_research.search_client import (
     SearchClient,
     SearchClientError,
@@ -100,11 +107,13 @@ from src.market_research.web_source_client import (
 __all__ = [
     "ALLOWED_RELEVANCE",
     "ALLOWED_SOURCE_TYPES",
+    "DEFAULT_RESEARCH_CATEGORIES",
     "DuckDuckGoHTMLSearchProvider",
     "DuckDuckGoHTTPError",
     "DuckDuckGoNetworkError",
     "DuckDuckGoSearchError",
     "DuckDuckGoTimeoutError",
+    "GeneratedResearchQueries",
     "InvalidOpportunityError",
     "MARKET_RESEARCH_CONTRACT_PRINCIPLES",
     "MARKET_RESEARCH_SYSTEM_PROMPT",
@@ -124,6 +133,8 @@ __all__ = [
     "REQUIRED_MARKET_RESEARCH_FIELDS",
     "REQUIRED_SEARCH_RESULT_FIELDS",
     "REQUIRED_SOURCE_FIELDS",
+    "ResearchQueryGenerator",
+    "ResearchQueryItem",
     "SearchClient",
     "SearchClientError",
     "SearchProvider",
@@ -149,6 +160,7 @@ __all__ = [
     "collect_sources_for_search_query",
     "fetch_source",
     "format_market_research_user_prompt",
+    "generate_research_queries",
     "parse_market_research_output",
     "search",
     "validate_market_research_contract",
