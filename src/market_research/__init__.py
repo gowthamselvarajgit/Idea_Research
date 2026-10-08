@@ -27,6 +27,13 @@ from src.market_research.repository import (
     MarketResearchRepositoryError,
     OpportunityNotFoundError,
 )
+from src.market_research.duckduckgo_provider import (
+    DuckDuckGoHTMLSearchProvider,
+    DuckDuckGoHTTPError,
+    DuckDuckGoNetworkError,
+    DuckDuckGoSearchError,
+    DuckDuckGoTimeoutError,
+)
 from src.market_research.research_prompt import (
     MARKET_RESEARCH_SYSTEM_PROMPT,
     format_market_research_user_prompt,
@@ -87,6 +94,11 @@ from src.market_research.web_source_client import (
 __all__ = [
     "ALLOWED_RELEVANCE",
     "ALLOWED_SOURCE_TYPES",
+    "DuckDuckGoHTMLSearchProvider",
+    "DuckDuckGoHTTPError",
+    "DuckDuckGoNetworkError",
+    "DuckDuckGoSearchError",
+    "DuckDuckGoTimeoutError",
     "InvalidOpportunityError",
     "MARKET_RESEARCH_CONTRACT_PRINCIPLES",
     "MARKET_RESEARCH_SYSTEM_PROMPT",

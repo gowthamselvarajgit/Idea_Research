@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from src.patents.inpass_client import InPassClient, InPassSearchConfig
 from src.patents.inpass_ingestion_service import InPassIngestionResult, InPassIngestionService
+from src.patents.research_config import ResearchDomainConfig
 
 logger = logging.getLogger(__name__)
 
@@ -54,47 +55,109 @@ class BasePatentQueryGenerator(ABC):
 
 
 class DeterministicPatentQueryGenerator(BasePatentQueryGenerator):
-    """Deterministic rule-based query generator using domain-agnostic technical facets.
+    """Deterministic rule-based query generator using domain configurations or technical facets.
 
     Splits and analyzes the input theme, prevents near-duplicate terms, and combines the
-    theme with targeted industrial facets in a deterministic, repeatable order.
+    theme with targeted industrial facets or configured research themes in a deterministic order.
     """
 
-    def __init__(self, facets: Optional[Sequence[str]] = None) -> None:
+    def __init__(
+        self,
+        facets: Optional[Sequence[str]] = None,
+        config: Optional[ResearchDomainConfig] = None,
+    ) -> None:
         """Initialize the query generator.
 
         Args:
             facets: Optional sequence of technical facet keywords to use for expansion.
                     Defaults to DEFAULT_TECHNICAL_FACETS.
+            config: Optional ResearchDomainConfig specifying domain themes/queries.
         """
         raw_facets = DEFAULT_TECHNICAL_FACETS if facets is None else facets
         self.facets = tuple(f.strip().upper() for f in raw_facets if f.strip())
+        self.config = config
 
-    def generate_queries(self, theme: str, max_queries: int = 5) -> list[str]:
-        """Decompose a research theme into a bounded set of targeted patent search queries.
-
-        Rules:
-        1. Validates that theme is a non-empty string.
-        2. Normalizes whitespace and uppercase characters.
-        3. If theme contains multiple words, includes the theme itself as the primary query.
-        4. Expands the theme with technical facets, skipping facets already present in the theme.
-        5. Performs case-insensitive and token-set deduplication.
-        6. Limits the result to max_queries in deterministic order.
+    def generate_queries_for_config(
+        self,
+        config: ResearchDomainConfig,
+        max_queries: int = 5,
+    ) -> list[str]:
+        """Generate deduplicated search queries directly from a ResearchDomainConfig.
 
         Args:
-            theme: Broad research theme (e.g. "WATER", "solar energy", "battery storage").
+            config: ResearchDomainConfig containing domain themes/queries.
+            max_queries: Maximum number of search queries to generate (must be >= 1).
+
+        Returns:
+            list[str]: Bounded list of targeted search queries.
+
+        Raises:
+            ValueError: If config is invalid or max_queries < 1.
+        """
+        if not isinstance(config, ResearchDomainConfig):
+            raise ValueError("config must be an instance of ResearchDomainConfig.")
+        if max_queries < 1:
+            raise ValueError("max_queries must be at least 1.")
+
+        generated: list[str] = []
+        seen_token_sets: list[set[str]] = []
+
+        for theme_item in config.themes:
+            if len(generated) >= max_queries:
+                break
+            clean_item = " ".join(theme_item.strip().split())
+            item_tokens = set(clean_item.upper().split())
+            if not clean_item or item_tokens in seen_token_sets:
+                continue
+            seen_token_sets.append(item_tokens)
+            generated.append(clean_item)
+
+        return generated[:max_queries]
+
+    def generate_queries(
+        self,
+        theme: Optional[str | ResearchDomainConfig] = None,
+        max_queries: int = 5,
+    ) -> list[str]:
+        """Decompose a research theme or domain config into a bounded set of targeted patent search queries.
+
+        Rules:
+        1. Validates that max_queries >= 1.
+        2. If theme is a ResearchDomainConfig, delegates to generate_queries_for_config.
+        3. If theme is None and self.config is set, delegates to generate_queries_for_config(self.config).
+        4. If theme matches self.config.domain_name, delegates to generate_queries_for_config(self.config).
+        5. For string themes, normalizes whitespace and uppercase characters.
+        6. If theme contains multiple words, includes the theme itself as the primary query.
+        7. Expands the theme with technical facets, skipping facets already present in the theme.
+        8. Performs case-insensitive and token-set deduplication.
+        9. Limits the result to max_queries in deterministic order.
+
+        Args:
+            theme: Broad research theme (e.g. "WATER"), or ResearchDomainConfig instance.
             max_queries: Maximum queries to return (must be >= 1).
 
         Returns:
             list[str]: Bounded list of targeted search query strings.
 
         Raises:
-            ValueError: If theme is empty or max_queries < 1.
+            ValueError: If theme is empty, invalid, or max_queries < 1.
         """
-        if not isinstance(theme, str) or not theme.strip():
-            raise ValueError("Research theme must be a non-empty string.")
         if max_queries < 1:
             raise ValueError("max_queries must be at least 1.")
+
+        if isinstance(theme, ResearchDomainConfig):
+            return self.generate_queries_for_config(theme, max_queries=max_queries)
+
+        if theme is None:
+            if self.config is not None:
+                return self.generate_queries_for_config(self.config, max_queries=max_queries)
+            raise ValueError("Research theme must be a non-empty string.")
+
+        if not isinstance(theme, str) or not theme.strip():
+            raise ValueError("Research theme must be a non-empty string.")
+
+        if self.config is not None and theme.strip().lower() == self.config.domain_name.strip().lower():
+            return self.generate_queries_for_config(self.config, max_queries=max_queries)
 
         clean_theme = " ".join(theme.strip().upper().split())
         theme_tokens = set(clean_theme.split())
@@ -175,6 +238,7 @@ class InPassDiscoveryStrategy:
         query_generator: Optional[BasePatentQueryGenerator] = None,
         ingestion_service: Optional[InPassIngestionService] = None,
         client: Optional[InPassClient] = None,
+        research_config: Optional[ResearchDomainConfig] = None,
     ) -> None:
         """Initialize the discovery strategy.
 
@@ -182,59 +246,99 @@ class InPassDiscoveryStrategy:
             query_generator: BasePatentQueryGenerator instance. Defaults to DeterministicPatentQueryGenerator.
             ingestion_service: InPassIngestionService instance. Defaults to a new InPassIngestionService.
             client: Optional InPassClient instance passed through to the ingestion service.
+            research_config: Optional ResearchDomainConfig specifying domain name and themes/queries.
         """
-        self.query_generator = query_generator or DeterministicPatentQueryGenerator()
+        self.research_config = research_config
+        self.query_generator = query_generator or DeterministicPatentQueryGenerator(config=research_config)
         self.ingestion_service = ingestion_service or InPassIngestionService(client=client)
 
-    def generate_targeted_queries(self, theme: str, max_queries: int = 5) -> list[str]:
+    def generate_targeted_queries(
+        self,
+        theme: Optional[str | ResearchDomainConfig] = None,
+        max_queries: int = 5,
+        research_config: Optional[ResearchDomainConfig] = None,
+    ) -> list[str]:
         """Expose direct query generation without running browser automation.
 
         Args:
-            theme: Broad research theme.
-            max_queries: Maximum number of search queries to generate.
+            theme: Broad research theme or ResearchDomainConfig.
+            max_queries: Maximum number of search queries to generate (must be >= 1).
+            research_config: Optional ResearchDomainConfig override.
 
         Returns:
             list[str]: Targeted patent queries.
+
+        Raises:
+            ValueError: If neither a valid theme nor research configuration is provided, or max_queries < 1.
         """
+        if max_queries < 1:
+            raise ValueError("max_queries must be at least 1.")
+
+        active_config = research_config or (theme if isinstance(theme, ResearchDomainConfig) else None)
+        if active_config is None and theme is None:
+            active_config = self.research_config
+
+        if active_config is not None:
+            if hasattr(self.query_generator, "generate_queries_for_config"):
+                return self.query_generator.generate_queries_for_config(active_config, max_queries=max_queries)
+            return self.query_generator.generate_queries(theme=active_config, max_queries=max_queries)
+
+        if theme is None:
+            raise ValueError("Research theme or configuration must be provided.")
+
         return self.query_generator.generate_queries(theme=theme, max_queries=max_queries)
 
     def discover_for_run(
         self,
         run_id: str,
-        theme: str,
+        theme: Optional[str | ResearchDomainConfig] = None,
         max_queries: int = 4,
         max_results_per_query: int = 3,
         on_captcha_required: Optional[Callable[[str], None]] = None,
         client: Optional[InPassClient] = None,
         captcha_solver: Optional[Callable[[str], str]] = None,
+        research_config: Optional[ResearchDomainConfig] = None,
     ) -> InPassDiscoveryResult:
         """Execute a multi-query InPASS discovery campaign for a research run.
 
-        1. Decomposes the broad research theme into a bounded set of targeted queries.
+        1. Decomposes the research domain configuration or broad research theme into targeted queries.
         2. Iterates over each query and executes search ingestion via InPassIngestionService.
         3. Preserves human-in-the-loop CAPTCHA checkpoints across query executions.
         4. Aggregates telemetry across all executed queries.
 
         Args:
             run_id: Unique research run identifier.
-            theme: Broad research theme (e.g. "WATER").
+            theme: Broad research theme (e.g. "WATER") or ResearchDomainConfig.
             max_queries: Maximum number of targeted queries to execute (default: 4).
             max_results_per_query: Maximum patent details to ingest per query (default: 3).
             on_captcha_required: Optional notification callback for CAPTCHA entry.
             client: Optional InPassClient override for this execution.
             captcha_solver: Optional callback to solve CAPTCHA challenges.
+            research_config: Optional ResearchDomainConfig override.
 
         Returns:
             InPassDiscoveryResult: Aggregated discovery and persistence metrics.
 
         Raises:
-            ValueError: If run_id or theme is empty, or limits < 1.
+            ValueError: If run_id is empty, limits < 1, or neither theme nor research_config is provided.
         """
-        if not run_id or not run_id.strip():
+        if not run_id or not str(run_id).strip():
             raise ValueError("run_id must be a non-empty string.")
 
-        queries = self.generate_targeted_queries(theme=theme, max_queries=max_queries)
-        logger.info("Generated %d targeted queries for theme '%s': %s", len(queries), theme, queries)
+        active_config = research_config or (theme if isinstance(theme, ResearchDomainConfig) else None)
+        if active_config is None and theme is None:
+            active_config = self.research_config
+
+        if active_config is not None:
+            active_theme = active_config.domain_name
+            queries = self.generate_targeted_queries(research_config=active_config, max_queries=max_queries)
+        else:
+            if not theme or not isinstance(theme, str) or not theme.strip():
+                raise ValueError("Research theme must be a non-empty string when research_config is not provided.")
+            active_theme = theme.strip()
+            queries = self.generate_targeted_queries(theme=active_theme, max_queries=max_queries)
+
+        logger.info("Generated %d targeted queries for theme '%s': %s", len(queries), active_theme, queries)
 
         executed: list[str] = []
         ingestion_results: list[InPassIngestionResult] = []
@@ -267,7 +371,7 @@ class InPassDiscoveryStrategy:
 
         return InPassDiscoveryResult(
             run_id=run_id,
-            theme=theme.strip(),
+            theme=active_theme,
             generated_queries=tuple(queries),
             executed_queries=tuple(executed),
             total_discovered=total_discovered,

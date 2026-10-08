@@ -17,6 +17,7 @@ from src.patents.discovery_strategy import (
     InPassDiscoveryStrategy,
 )
 from src.patents.inpass_client import InPassClient
+from src.patents.research_config import ResearchDomainConfig
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,7 @@ class ResearchService:
         db_path: Optional[Path | str] = None,
         run_service: Optional[ResearchRunService] = None,
         discovery_strategy: Optional[InPassDiscoveryStrategy] = None,
+        research_config: Optional[ResearchDomainConfig] = None,
     ) -> None:
         """Initialize the research service.
 
@@ -122,14 +124,16 @@ class ResearchService:
             db_path: Path to SQLite database. Defaults to DATABASE_PATH.
             run_service: Optional ResearchRunService instance.
             discovery_strategy: Optional InPassDiscoveryStrategy instance.
+            research_config: Optional ResearchDomainConfig instance.
         """
         self.db_path = Path(db_path) if db_path else DATABASE_PATH
         self.run_service = run_service or ResearchRunService(db_path=self.db_path)
-        self.discovery_strategy = discovery_strategy or InPassDiscoveryStrategy()
+        self.research_config = research_config
+        self.discovery_strategy = discovery_strategy or InPassDiscoveryStrategy(research_config=research_config)
 
     def run_patent_research(
         self,
-        theme: str,
+        theme: Optional[str | ResearchDomainConfig] = None,
         max_queries: int = 4,
         max_results_per_query: int = 3,
         on_captcha_required: Optional[Callable[[str], None]] = None,
@@ -137,8 +141,9 @@ class ResearchService:
         client: Optional[InPassClient] = None,
         raise_on_error: bool = False,
         captcha_solver: Optional[Callable[[str], str]] = None,
+        research_config: Optional[ResearchDomainConfig] = None,
     ) -> PatentResearchResult:
-        """Execute a complete patent research run for a given theme.
+        """Execute a complete patent research run for a given theme or configuration.
 
         Lifecycle:
         1. Validates inputs.
@@ -151,7 +156,7 @@ class ResearchService:
         8. Returns structured PatentResearchResult with run-level telemetry.
 
         Args:
-            theme: Broad research theme (e.g. "WATER").
+            theme: Broad research theme (e.g. "WATER") or ResearchDomainConfig instance.
             max_queries: Maximum number of targeted queries to generate and execute (must be >= 1).
             max_results_per_query: Maximum patent details to retrieve per query (must be >= 1).
             on_captcha_required: Optional callback invoked when CAPTCHA entry is required.
@@ -159,6 +164,7 @@ class ResearchService:
             client: Optional InPassClient instance override.
             raise_on_error: If True, re-raises discovery/execution exceptions after marking run failed.
             captcha_solver: Optional callback accepting (image_path: str) and returning (captcha_text: str).
+            research_config: Optional ResearchDomainConfig instance.
 
         Returns:
             PatentResearchResult: Consolidated telemetry and final execution status.
@@ -167,20 +173,36 @@ class ResearchService:
             ValueError: If theme is empty/invalid or limits are < 1.
             PatentResearchExecutionError: If execution fails and raise_on_error is True.
         """
-        if not isinstance(theme, str) or not theme.strip():
-            raise ValueError("Research theme must be a non-empty string.")
         if max_queries < 1:
             raise ValueError("max_queries must be at least 1.")
         if max_results_per_query < 1:
             raise ValueError("max_results_per_query must be at least 1.")
 
-        clean_theme = theme.strip()
+        active_config = research_config or (theme if isinstance(theme, ResearchDomainConfig) else None)
+        if active_config is None and theme is None:
+            active_config = self.research_config
+
+        if active_config is not None:
+            clean_theme = active_config.domain_name
+            target_config = active_config
+        else:
+            if not isinstance(theme, str) or not theme.strip():
+                raise ValueError("Research theme must be a non-empty string.")
+            clean_theme = theme.strip()
+            target_config = None
 
         # 1. Generate targeted search queries
-        generated_queries = self.discovery_strategy.generate_targeted_queries(
-            theme=clean_theme,
-            max_queries=max_queries,
-        )
+        if target_config is not None:
+            generated_queries = self.discovery_strategy.generate_targeted_queries(
+                theme=clean_theme,
+                max_queries=max_queries,
+                research_config=target_config,
+            )
+        else:
+            generated_queries = self.discovery_strategy.generate_targeted_queries(
+                theme=clean_theme,
+                max_queries=max_queries,
+            )
         logger.info(
             "ResearchService generated %d queries for theme '%s': %s",
             len(generated_queries),
@@ -197,6 +219,10 @@ class ResearchService:
             "generated_queries": list(generated_queries),
             "strategy": "InPassDiscoveryStrategy",
         }
+        if target_config is not None:
+            initial_metadata["domain_name"] = target_config.domain_name
+            initial_metadata["description"] = target_config.description
+
         run_id = self.run_service.create_run(
             run_name=active_run_name,
             query=clean_theme,
@@ -208,15 +234,19 @@ class ResearchService:
 
         # 4. Execute multi-query discovery with error handling and run lifecycle management
         try:
-            discovery_result = self.discovery_strategy.discover_for_run(
-                run_id=run_id,
-                theme=clean_theme,
-                max_queries=max_queries,
-                max_results_per_query=max_results_per_query,
-                on_captcha_required=on_captcha_required,
-                client=client,
-                captcha_solver=captcha_solver,
-            )
+            disc_kwargs = {
+                "run_id": run_id,
+                "theme": clean_theme,
+                "max_queries": max_queries,
+                "max_results_per_query": max_results_per_query,
+                "on_captcha_required": on_captcha_required,
+                "client": client,
+                "captcha_solver": captcha_solver,
+            }
+            if target_config is not None:
+                disc_kwargs["research_config"] = target_config
+
+            discovery_result = self.discovery_strategy.discover_for_run(**disc_kwargs)
 
             # 5. Complete research run on success
             self.run_service.complete_run(run_id)

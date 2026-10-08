@@ -44,6 +44,14 @@ from src.patents.discovery_strategy import (
     InPassDiscoveryResult,
     InPassDiscoveryStrategy,
 )
+from src.patents.research_config import (
+    COSMETICS_RESEARCH_CONFIG,
+    DEFAULT_RESEARCH_CONFIG,
+    WATER_RESEARCH_CONFIG,
+    PatentResearchConfig,
+    ResearchDomainConfig,
+    get_default_research_config,
+)
 from src.patents.inpass_parser import (
     InPassParserError,
     parse_inpass_details,
@@ -64,6 +72,8 @@ from src.patents.models import (
 __all__ = [
     "BasePatentClient",
     "BasePatentQueryGenerator",
+    "COSMETICS_RESEARCH_CONFIG",
+    "DEFAULT_RESEARCH_CONFIG",
     "DeterministicPatentQueryGenerator",
     "DiscoveryStats",
     "EPOAuthClient",
@@ -122,7 +132,11 @@ __all__ = [
     "parse_epo_search_response",
     "parse_inpass_details",
     "parse_inpass_patent_details",
+    "PatentResearchConfig",
+    "ResearchDomainConfig",
     "validate_patent_number",
+    "WATER_RESEARCH_CONFIG",
+    "get_default_research_config",
 ]
 
 
