@@ -204,6 +204,14 @@ class _DuckDuckGoHTMLParser(HTMLParser):
         class_str = attr_dict.get("class", "").lower()
         class_list = class_str.split()
 
+        # Check for result container boundary
+        is_result_container = any(
+            c in ("result", "web-result", "results_links", "results_links_deep")
+            for c in class_list
+        )
+        if is_result_container:
+            self._commit_current()
+
         # Check for title anchor link: <a class="result__a" href="...">
         is_title_anchor = tag == "a" and any("result__a" in c for c in class_list)
 

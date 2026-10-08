@@ -56,6 +56,12 @@ from src.market_research.search_contract import (
 from src.market_research.search_models import (
     SearchResult,
 )
+from src.market_research.search_source_collector import (
+    SearchSourceCollectionResult,
+    SearchSourceCollector,
+    SearchSourceCollectorError,
+    collect_sources_for_search_query,
+)
 from src.market_research.service import (
     InvalidOpportunityError,
     MarketResearchAIError,
@@ -125,6 +131,9 @@ __all__ = [
     "SearchQueryValidationError",
     "SearchResult",
     "SearchResultContractValidationError",
+    "SearchSourceCollectionResult",
+    "SearchSourceCollector",
+    "SearchSourceCollectorError",
     "SourceCollectionFailure",
     "SourceCollectionResult",
     "WebResearchSource",
@@ -137,6 +146,7 @@ __all__ = [
     "WebSourceInvalidURLError",
     "WebSourceNetworkError",
     "collect_sources",
+    "collect_sources_for_search_query",
     "fetch_source",
     "format_market_research_user_prompt",
     "parse_market_research_output",
