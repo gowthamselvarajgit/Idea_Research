@@ -371,20 +371,28 @@ class TestTavilyIntegration(unittest.TestCase):
         mock_tavily.search.assert_not_called()
 
     def test_create_default_search_provider_unconfigured(self) -> None:
-        """When TAVILY_API_KEY is not set, create_default_search_provider returns only DuckDuckGo."""
+        """When TAVILY_API_KEY is not set, create_default_search_provider includes DDG and Google News."""
         with patch.dict("os.environ", {}, clear=True):
-            provider = create_default_search_provider()
-            self.assertIsInstance(provider, DuckDuckGoHTMLSearchProvider)
-
-    def test_create_default_search_provider_configured(self) -> None:
-        """When TAVILY_API_KEY is set, create_default_search_provider returns FallbackSearchProvider."""
-        with patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-active-key"}):
             provider = create_default_search_provider()
             self.assertIsInstance(provider, FallbackSearchProvider)
             self.assertEqual(len(provider.providers), 2)
-            self.assertIsInstance(provider.providers[0], DuckDuckGoHTMLSearchProvider)
-            self.assertIsInstance(provider.providers[1], TavilySearchProvider)
-            self.assertEqual(provider.providers[1].api_key, "tvly-active-key")
+            self.assertEqual(provider.providers[0].name, "DuckDuckGoHTMLSearchProvider")
+            self.assertEqual(provider.providers[1].name, "GoogleNewsRSSSearchProvider")
+
+            # With Google News disabled, returns sole DuckDuckGo provider
+            solo = create_default_search_provider(enable_google_news=False)
+            self.assertIsInstance(solo, DuckDuckGoHTMLSearchProvider)
+
+    def test_create_default_search_provider_configured(self) -> None:
+        """When TAVILY_API_KEY is set, create_default_search_provider appends Tavily to providers."""
+        with patch.dict("os.environ", {"TAVILY_API_KEY": "tvly-active-key"}):
+            provider = create_default_search_provider()
+            self.assertIsInstance(provider, FallbackSearchProvider)
+            self.assertEqual(len(provider.providers), 3)
+            self.assertEqual(provider.providers[0].name, "DuckDuckGoHTMLSearchProvider")
+            self.assertEqual(provider.providers[1].name, "GoogleNewsRSSSearchProvider")
+            self.assertEqual(provider.providers[2].name, "TavilySearchProvider")
+            self.assertEqual(provider.providers[2].api_key, "tvly-active-key")
 
 
 def io_bytes(data: bytes):

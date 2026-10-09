@@ -10,6 +10,7 @@ from src.market_research.research_query_generator import (
     ResearchQueryGenerator,
     ResearchQueryItem,
     build_research_query,
+    generate_google_news_queries,
     generate_research_queries,
 )
 from src.patents.research_config import (
@@ -219,6 +220,60 @@ class TestResearchQueryGenerator(unittest.TestCase):
             build_research_query("   skincare   formulation  ", "  market   gaps  "),
             "skincare formulation market gaps",
         )
+
+    def test_build_research_query_quoted_subject_anchor(self) -> None:
+        """14. build_research_query with quote_subject_anchor=True quotes the theme anchor."""
+        # Single word theme
+        self.assertEqual(
+            build_research_query("skincare", "competitors", quote_subject_anchor=True),
+            '"skincare" competitors',
+        )
+        # Multi-word theme
+        self.assertEqual(
+            build_research_query("WATER QUALITY", "technology", quote_subject_anchor=True),
+            '"WATER QUALITY" technology',
+        )
+        # Already quoted theme does not double-quote
+        self.assertEqual(
+            build_research_query('"skincare"', "market gaps", quote_subject_anchor=True),
+            '"skincare" market gaps',
+        )
+        # Theme with token overlap
+        self.assertEqual(
+            build_research_query("skincare products", "products", quote_subject_anchor=True),
+            '"skincare products"',
+        )
+
+    def test_generate_google_news_queries_anchors_themes(self) -> None:
+        """15. generate_google_news_queries quotes the primary theme anchor for all categories."""
+        cosmetics_res = generate_google_news_queries(COSMETICS_RESEARCH_CONFIG, max_queries=7)
+        self.assertEqual(len(cosmetics_res.queries), 7)
+        for q in cosmetics_res.queries:
+            # Theme anchor "skincare" is quoted at the start
+            self.assertTrue(q.startswith('"skincare"'))
+
+        # Intent modifier words are unquoted
+        self.assertIn('"skincare" competitors', cosmetics_res.queries)
+        self.assertIn('"skincare" products', cosmetics_res.queries)
+        self.assertIn('"skincare" technology', cosmetics_res.queries)
+        self.assertIn('"skincare" customer problems', cosmetics_res.queries)
+
+        # Non-skincare domain works identically
+        water_res = generate_google_news_queries(WATER_RESEARCH_CONFIG, max_queries=5)
+        self.assertEqual(len(water_res.queries), 5)
+        for q in water_res.queries:
+            self.assertTrue(q.startswith('"WATER MONITORING"'))
+        self.assertIn('"WATER MONITORING" competitors', water_res.queries)
+
+    def test_quote_subject_anchor_flag_in_generator(self) -> None:
+        """16. ResearchQueryGenerator(quote_subject_anchor=True) and generator.generate_google_news_queries work."""
+        gen_quoted = ResearchQueryGenerator(quote_subject_anchor=True)
+        res = gen_quoted.generate_queries(COSMETICS_RESEARCH_CONFIG, max_queries=3)
+        self.assertEqual(res[0], '"skincare" competitors')
+
+        gen_default = ResearchQueryGenerator()
+        res_gnews = gen_default.generate_google_news_queries(COSMETICS_RESEARCH_CONFIG, max_queries=3)
+        self.assertEqual(res_gnews[0], '"skincare" competitors')
 
 
 if __name__ == "__main__":

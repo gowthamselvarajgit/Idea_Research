@@ -28,6 +28,7 @@ from src.market_research.repository import (
     OpportunityNotFoundError,
 )
 from src.market_research.duckduckgo_provider import (
+    DuckDuckGoChallengeError,
     DuckDuckGoHTMLSearchProvider,
     DuckDuckGoHTTPError,
     DuckDuckGoNetworkError,
@@ -39,6 +40,17 @@ from src.market_research.fallback_search_provider import (
     FallbackSearchProvider,
     FallbackSearchProviderError,
     create_default_search_provider,
+)
+from src.market_research.google_news_provider import (
+    CandidateDecision,
+    GoogleNewsHTTPError,
+    GoogleNewsNetworkError,
+    GoogleNewsParseError,
+    GoogleNewsRSSSearchProvider,
+    GoogleNewsSearchError,
+    GoogleNewsTimeoutError,
+    SearchDiagnostics,
+    evaluate_candidate_relevance,
 )
 from src.market_research.tavily_provider import (
     TavilyAuthenticationError,
@@ -58,6 +70,8 @@ from src.market_research.research_query_generator import (
     GeneratedResearchQueries,
     ResearchQueryGenerator,
     ResearchQueryItem,
+    build_research_query,
+    generate_google_news_queries,
     generate_research_queries,
 )
 from src.market_research.search_client import (
@@ -66,6 +80,7 @@ from src.market_research.search_client import (
     SearchProvider,
     SearchProviderError,
     SearchQueryValidationError,
+    callable_accepts_kwarg,
     search,
 )
 from src.market_research.search_contract import (
@@ -134,6 +149,8 @@ __all__ = [
     "AllProvidersFailedError",
     "create_default_search_provider",
     "DEFAULT_RESEARCH_CATEGORIES",
+    "CandidateDecision",
+    "DuckDuckGoChallengeError",
     "DuckDuckGoHTMLSearchProvider",
     "DuckDuckGoHTTPError",
     "DuckDuckGoNetworkError",
@@ -142,6 +159,16 @@ __all__ = [
     "FallbackSearchProvider",
     "FallbackSearchProviderError",
     "GeneratedResearchQueries",
+    "GoogleNewsHTTPError",
+    "GoogleNewsNetworkError",
+    "GoogleNewsParseError",
+    "GoogleNewsRSSSearchProvider",
+    "GoogleNewsSearchError",
+    "GoogleNewsTimeoutError",
+    "SearchDiagnostics",
+    "build_research_query",
+    "evaluate_candidate_relevance",
+    "generate_google_news_queries",
     "InvalidOpportunityError",
     "InvalidOpportunityIdError",
     "MARKET_RESEARCH_CONTRACT_PRINCIPLES",
@@ -195,6 +222,7 @@ __all__ = [
     "WebSourceInvalidURLError",
     "WebSourceNetworkError",
     "analyze_web_sources",
+    "callable_accepts_kwarg",
     "collect_sources",
     "collect_sources_for_search_query",
     "fetch_source",

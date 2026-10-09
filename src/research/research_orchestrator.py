@@ -20,6 +20,7 @@ from src.evaluation.evaluation_service import OpportunityEvaluationService
 from src.evaluation.models import OpportunityEvaluationRecord
 from src.market_research.models import MarketResearchRecord
 from src.market_research.research_query_generator import ResearchQueryGenerator
+from src.market_research.search_client import callable_accepts_kwarg
 from src.market_research.search_source_collector import SearchSourceCollector
 from src.market_research.source_collection import SourceCollectionFailure
 from src.market_research.source_models import WebResearchSource
@@ -281,10 +282,17 @@ class ResearchOrchestrator:
         # Stage 5: Web Research Query Generation
         # ---------------------------------------------------------------------
         logger.info("Stage 5/7: Generating web research queries for domain '%s'...", domain_config.domain_name)
-        queries_result = self.query_generator.generate_queries(
-            domain_config,
-            max_queries=max_web_queries,
-        )
+        if callable_accepts_kwarg(self.query_generator.generate_queries, "quote_subject_anchor"):
+            queries_result = self.query_generator.generate_queries(
+                domain_config,
+                max_queries=max_web_queries,
+                quote_subject_anchor=True,
+            )
+        else:
+            queries_result = self.query_generator.generate_queries(
+                domain_config,
+                max_queries=max_web_queries,
+            )
         web_queries = list(queries_result.queries)
 
         # ---------------------------------------------------------------------
@@ -293,14 +301,25 @@ class ResearchOrchestrator:
         collected_sources: list[WebResearchSource] = []
         collection_failures: list[SourceCollectionFailure] = []
         seen_urls: set[str] = set()
+        domain_subject_terms = tuple(domain_config.themes)
+        accepts_subjects = callable_accepts_kwarg(
+            self.search_collector.collect_for_query, "subject_terms"
+        )
 
         logger.info("Stage 6/7: Collecting web sources across %d queries...", len(web_queries))
         for q in web_queries[:max_web_queries]:
             try:
-                col_res = self.search_collector.collect_for_query(
-                    query=q,
-                    max_results=max_web_results_per_query,
-                )
+                if accepts_subjects and domain_subject_terms is not None:
+                    col_res = self.search_collector.collect_for_query(
+                        query=q,
+                        max_results=max_web_results_per_query,
+                        subject_terms=domain_subject_terms,
+                    )
+                else:
+                    col_res = self.search_collector.collect_for_query(
+                        query=q,
+                        max_results=max_web_results_per_query,
+                    )
                 for s in col_res.sources:
                     if s.url not in seen_urls:
                         seen_urls.add(s.url)

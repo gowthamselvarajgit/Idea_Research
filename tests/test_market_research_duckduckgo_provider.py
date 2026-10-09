@@ -9,6 +9,7 @@ import urllib.request
 
 from src.market_research.duckduckgo_provider import (
     DUCKDUCKGO_HTML_ENDPOINT,
+    DuckDuckGoChallengeError,
     DuckDuckGoHTMLSearchProvider,
     DuckDuckGoHTTPError,
     DuckDuckGoNetworkError,
@@ -16,7 +17,9 @@ from src.market_research.duckduckgo_provider import (
     DuckDuckGoTimeoutError,
     decode_duckduckgo_url,
     extract_domain_from_url,
+    is_duckduckgo_challenge_page,
 )
+from src.market_research.fallback_search_provider import FallbackSearchProvider
 from src.market_research.search_client import (
     SearchClient,
     SearchProvider,
@@ -244,10 +247,11 @@ class TestDuckDuckGoHTMLSearchProvider(unittest.TestCase):
         self.assertEqual(len(results_2), 2)
 
     def test_malformed_result_handling(self) -> None:
-        """10. Results missing title or snippet or with invalid href are safely ignored."""
+        """10. Results missing title, empty href, or invalid URL are safely ignored."""
         html_malformed = """
         <div class="result">
-          <a class="result__a" href="https://missing-snippet.com">Title Only</a>
+          <a class="result__a" href="https://empty-title.com">   </a>
+          <div class="result__snippet">Snippet with empty title</div>
         </div>
         <div class="result">
           <div class="result__snippet">Snippet without title</div>
@@ -405,6 +409,150 @@ class TestDuckDuckGoHTMLSearchProvider(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     provider.search(query="skincare", max_results=bad_m)  # type: ignore[arg-type]
 
+    def test_explicit_challenge_detection(self) -> None:
+        """17. Anti-bot verification and challenge signatures raise DuckDuckGoChallengeError."""
+        challenge_html = """<!DOCTYPE html>
+        <html>
+        <head><title>DuckDuckGo — Anomaly Detected</title></head>
+        <body>
+          <div id="challenge-form">
+            <p>Please complete the security check. Automated traffic has been detected.</p>
+          </div>
+        </body>
+        </html>"""
+
+        provider = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: challenge_html
+        )
+        with self.assertRaises(DuckDuckGoChallengeError) as ctx:
+            provider.search("skincare competitors", max_results=3)
+
+        self.assertIn("anti-bot challenge", str(ctx.exception).lower())
+        self.assertEqual(ctx.exception.status_code, 200)
+
+        # Verify that generic words like "challenge" in normal content do not falsely trigger challenge error
+        normal_html_with_challenge_word = """<!DOCTYPE html>
+        <html>
+        <head><title>30-Day Skincare Challenge</title></head>
+        <body>
+          <div class="results">
+            <div class="result">
+              <a class="result__a" href="https://example.com/challenge">Take the 30-Day Skincare Challenge</a>
+              <div class="result__snippet">A daily routine challenge to transform your skin barrier.</div>
+            </div>
+          </div>
+        </body>
+        </html>"""
+
+        provider_normal = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: normal_html_with_challenge_word
+        )
+        results = provider_normal.search("skincare challenge", max_results=3)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Take the 30-Day Skincare Challenge")
+
+    def test_genuine_empty_result_page(self) -> None:
+        """18. Genuine empty search results return an empty list without raising an error."""
+        empty_html = """<!DOCTYPE html>
+        <html>
+        <head><title>DuckDuckGo</title></head>
+        <body>
+          <div class="results">
+            <div class="no-results">No results found for query.</div>
+          </div>
+        </body>
+        </html>"""
+
+        provider = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: empty_html
+        )
+        with self.assertLogs("src.market_research.duckduckgo_provider", level="WARNING") as log_ctx:
+            results = provider.search("unmatched query term 999", max_results=3)
+
+        self.assertEqual(len(results), 0)
+        self.assertTrue(any("returned 0 parsed results" in msg for msg in log_ctx.output))
+
+    def test_unrecognized_html_layout_changes(self) -> None:
+        """19. Unrecognized HTML layout returns empty results and logs warning with HTML length."""
+        unrecognized_html = """<!DOCTYPE html>
+        <html>
+        <head><title>DuckDuckGo Search</title></head>
+        <body>
+          <main class="new-redesigned-search-layout">
+            <article class="modern-card">
+              <a href="https://example.com/page">Modern Result Title</a>
+            </article>
+          </main>
+        </body>
+        </html>"""
+
+        provider = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: unrecognized_html
+        )
+        with self.assertLogs("src.market_research.duckduckgo_provider", level="WARNING") as log_ctx:
+            results = provider.search("query with new layout", max_results=3)
+
+        self.assertEqual(len(results), 0)
+        self.assertTrue(any("returned 0 parsed results" in msg and "HTML length:" in msg for msg in log_ctx.output))
+
+    def test_valid_result_with_missing_snippet(self) -> None:
+        """20. Valid search result with title and URL but missing snippet uses title as fallback."""
+        html_without_snippet = """<!DOCTYPE html>
+        <html>
+        <head><title>DuckDuckGo</title></head>
+        <body>
+          <div class="results">
+            <div class="result">
+              <h2 class="result__title">
+                <a class="result__a" href="https://nosnippet.com/product">AI Skin Diagnostic Suite</a>
+              </h2>
+            </div>
+          </div>
+        </body>
+        </html>"""
+
+        provider = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: html_without_snippet
+        )
+        results = provider.search("diagnostic suite", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        res = results[0]
+        self.assertEqual(res.url, "https://nosnippet.com/product")
+        self.assertEqual(res.title, "AI Skin Diagnostic Suite")
+        self.assertEqual(res.snippet, "AI Skin Diagnostic Suite")  # Fallback to title
+        validate_search_result_record(res)
+
+    def test_challenge_error_triggers_fallback_provider(self) -> None:
+        """21. DuckDuckGoChallengeError triggers fallback in FallbackSearchProvider."""
+        challenge_html = """<!DOCTYPE html>
+        <html>
+        <head><title>DuckDuckGo — Anomaly Detected</title></head>
+        <body><div id="challenge-form">Automated traffic detected.</div></body>
+        </html>"""
+
+        ddg_provider = DuckDuckGoHTMLSearchProvider(
+            http_transport=lambda req, to: challenge_html
+        )
+
+        mock_fallback = MagicMock(spec=SearchProvider)
+        mock_fallback.search.return_value = [
+            SearchResult(
+                url="https://fallback.com/success",
+                title="Fallback Success",
+                snippet="Retrieved from secondary provider",
+                domain="fallback.com",
+            )
+        ]
+
+        composite = FallbackSearchProvider([ddg_provider, mock_fallback])
+        results = composite.search("skincare competitors", max_results=3)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://fallback.com/success")
+        mock_fallback.search.assert_called_once_with("skincare competitors", 3)
+
 
 if __name__ == "__main__":
     unittest.main()
+

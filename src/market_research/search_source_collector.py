@@ -17,6 +17,7 @@ from src.market_research.search_client import (
     SearchProvider,
     SearchProviderError,
     SearchQueryValidationError,
+    callable_accepts_kwarg,
 )
 from src.market_research.search_models import SearchResult
 from src.market_research.source_collection import (
@@ -95,6 +96,7 @@ class SearchSourceCollector:
         search_provider: Optional[SearchProvider] = None,
         provider: Optional[SearchProvider] = None,
         collector: Optional[WebSourceCollector] = None,
+        subject_terms: Optional[Sequence[str]] = None,
     ) -> None:
         """Initialize SearchSourceCollector with injected search and collection components.
 
@@ -105,7 +107,10 @@ class SearchSourceCollector:
             search_provider: Explicit SearchProvider instance.
             provider: Alias for search_provider.
             collector: Alias for source_collector.
+            subject_terms: Optional default subject vocabulary for search provider relevance filtering.
         """
+        self.subject_terms = tuple(subject_terms) if subject_terms is not None else None
+
         # Resolve search client
         active_client = search_client
         if active_client is None:
@@ -117,7 +122,11 @@ class SearchSourceCollector:
             elif search_provider_or_client is not None:
                 active_client = SearchClient(provider=search_provider_or_client)
             else:
-                active_client = SearchClient(provider=create_default_search_provider())
+                active_client = SearchClient(
+                    provider=create_default_search_provider(
+                        google_news_subject_terms=self.subject_terms,
+                    )
+                )
 
         self.search_client = active_client
         self.source_collector = source_collector or collector or WebSourceCollector()
@@ -132,6 +141,8 @@ class SearchSourceCollector:
         query: str,
         max_results: int = DEFAULT_MAX_RESULTS,
         source_type: str = "other",
+        *,
+        subject_terms: Optional[Sequence[str]] = None,
     ) -> SearchSourceCollectionResult:
         """Execute a search query and retrieve web sources for the discovered URLs.
 
@@ -149,6 +160,7 @@ class SearchSourceCollector:
             query: Non-empty search query string.
             max_results: Maximum number of search results/sources to retrieve.
             source_type: Controlled classification for WebSourceClient (default: "other").
+            subject_terms: Optional per-query subject terms overriding default collector configuration.
 
         Returns:
             SearchSourceCollectionResult: Aggregated search and collection outcome.
@@ -163,13 +175,25 @@ class SearchSourceCollector:
             raise SearchQueryValidationError("max_results must be an integer >= 1.")
 
         clean_query = query.strip()
+        effective_subjects = subject_terms if subject_terms is not None else self.subject_terms
 
         # 1. Execute search
         try:
-            search_results = self.search_client.search(
-                query=clean_query,
-                max_results=max_results,
-            )
+            if effective_subjects is not None and callable_accepts_kwarg(
+                self.search_client.search, "subject_terms"
+            ):
+                search_results = self.search_client.search(
+                    query=clean_query,
+                    max_results=max_results,
+                    subject_terms=effective_subjects,
+                )
+            else:
+                search_results = self.search_client.search(
+                    query=clean_query,
+                    max_results=max_results,
+                )
+        except TypeError:
+            raise
         except SearchProviderError as exc:
             logger.error("Search provider error for query '%s': %s", clean_query, exc)
             raise SearchSourceCollectorError(
@@ -227,6 +251,8 @@ def collect_sources_for_search_query(
     source_collector: Optional[WebSourceCollector] = None,
     max_results: int = DEFAULT_MAX_RESULTS,
     source_type: str = "other",
+    *,
+    subject_terms: Optional[Sequence[str]] = None,
 ) -> SearchSourceCollectionResult:
     """Convenience functional wrapper to search and collect sources for a query.
 
@@ -236,6 +262,7 @@ def collect_sources_for_search_query(
         source_collector: Optional WebSourceCollector override.
         max_results: Maximum results/sources to retrieve.
         source_type: Controlled classification for WebSourceClient.
+        subject_terms: Optional domain subject terms for search provider relevance filtering.
 
     Returns:
         SearchSourceCollectionResult: Consolidated search and collection outcome.
@@ -243,9 +270,11 @@ def collect_sources_for_search_query(
     service = SearchSourceCollector(
         search_provider_or_client=search_provider_or_client,
         source_collector=source_collector,
+        subject_terms=subject_terms,
     )
     return service.collect_for_query(
         query=query,
         max_results=max_results,
         source_type=source_type,
+        subject_terms=subject_terms,
     )

@@ -4,8 +4,9 @@ Defines the pluggable SearchProvider protocol and deterministic SearchClient,
 supporting future search engines without tight coupling.
 """
 
+import inspect
 import logging
-from typing import Final, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Final, Optional, Protocol, Sequence, runtime_checkable
 import urllib.parse
 
 from src.market_research.search_models import SearchResult
@@ -14,6 +15,56 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS: Final[int] = 10
 MAX_ALLOWED_RESULTS: Final[int] = 100
+
+
+def callable_accepts_kwarg(target: Any, kwarg_name: str) -> bool:
+    """Check whether a callable accepts a specific keyword argument or **kwargs.
+
+    Uses inspect.signature() to inspect the parameters of the given callable.
+    Returns True if the callable defines a parameter with matching name (that can
+    be passed as a keyword) or accepts variable keyword arguments (**kwargs).
+
+    If the callable cannot be inspected (e.g. certain builtins or C extensions
+    raising ValueError/TypeError), returns True so that domain-specific parameters
+    are attempted rather than silently discarded, and any errors propagate cleanly.
+
+    Args:
+        target: Callable object to inspect (function, method, class, mock, etc.).
+        kwarg_name: Name of the keyword argument to check for.
+
+    Returns:
+        bool: True if target accepts kwarg_name or **kwargs (or cannot be inspected),
+              False if target clearly does not accept the keyword argument.
+    """
+    if not callable(target):
+        return False
+
+    # If target is a mock with a callable side_effect, inspect the underlying side_effect
+    side_effect = getattr(target, "side_effect", None)
+    if callable(side_effect) and not (
+        isinstance(side_effect, type) and issubclass(side_effect, BaseException)
+    ):
+        inspect_target = side_effect
+    else:
+        inspect_target = target
+
+    try:
+        sig = inspect.signature(inspect_target)
+    except (ValueError, TypeError):
+        # Cannot inspect signature; prefer attempting kwarg rather than silently dropping
+        return True
+
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == kwarg_name and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+
+    return False
+
 
 
 class SearchClientError(Exception):
@@ -68,6 +119,8 @@ class SearchClient:
         self,
         query: str,
         max_results: int = DEFAULT_MAX_RESULTS,
+        *,
+        subject_terms: Optional[Sequence[str]] = None,
     ) -> tuple[SearchResult, ...]:
         """Execute search query through the configured provider and return filtered HTTP/HTTPS results.
 
@@ -81,6 +134,7 @@ class SearchClient:
         Args:
             query: Search query text.
             max_results: Maximum desired results (default 10, between 1 and 100).
+            subject_terms: Optional domain subject vocabulary for relevance filtering.
 
         Returns:
             tuple[SearchResult, ...]: Discovered and validated search results.
@@ -110,7 +164,18 @@ class SearchClient:
 
         # 3. Call search provider
         try:
-            raw_results = self.provider.search(clean_query, max_results)
+            if subject_terms is not None and callable_accepts_kwarg(
+                self.provider.search, "subject_terms"
+            ):
+                raw_results = self.provider.search(
+                    clean_query,
+                    max_results,
+                    subject_terms=subject_terms,
+                )
+            else:
+                raw_results = self.provider.search(clean_query, max_results)
+        except TypeError:
+            raise
         except Exception as exc:
             logger.error("Search provider failed for query '%s': %s", clean_query, exc)
             raise SearchProviderError(
@@ -141,6 +206,8 @@ def search(
     query: str,
     max_results: int = DEFAULT_MAX_RESULTS,
     provider: Optional[SearchProvider] = None,
+    *,
+    subject_terms: Optional[Sequence[str]] = None,
 ) -> tuple[SearchResult, ...]:
     """Convenience functional wrapper for executing a search query with an injected provider.
 
@@ -148,6 +215,7 @@ def search(
         query: Non-empty search query string.
         max_results: Maximum desired results.
         provider: Pluggable search discovery provider.
+        subject_terms: Optional domain subject vocabulary for relevance filtering.
 
     Returns:
         tuple[SearchResult, ...]: Discovered search results.
@@ -155,4 +223,4 @@ def search(
     if provider is None:
         raise ValueError("provider is required and must not be None.")
     client = SearchClient(provider=provider)
-    return client.search(query=query, max_results=max_results)
+    return client.search(query=query, max_results=max_results, subject_terms=subject_terms)

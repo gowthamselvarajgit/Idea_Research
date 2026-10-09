@@ -8,6 +8,7 @@ from src.market_research.search_client import (
     SearchProvider,
     SearchProviderError,
     SearchQueryValidationError,
+    callable_accepts_kwarg,
     search,
 )
 from src.market_research.search_models import SearchResult
@@ -132,6 +133,77 @@ class TestSearchClient(unittest.TestCase):
         with self.assertRaises(ValueError):
             search(query="crawler", provider=None)
 
+    def test_callable_accepts_kwarg_helper(self) -> None:
+        """callable_accepts_kwarg identifies standard, keyword-only, **kwargs, and positional-only arguments."""
+        def standard_fn(query: str, max_results: int = 5) -> None:
+            pass
+
+        def kwonly_fn(query: str, *, subject_terms: None = None) -> None:
+            pass
+
+        def kwargs_fn(query: str, **kwargs) -> None:
+            pass
+
+        def posonly_fn(subject_terms: str, /) -> None:
+            pass
+
+        self.assertTrue(callable_accepts_kwarg(standard_fn, "max_results"))
+        self.assertFalse(callable_accepts_kwarg(standard_fn, "subject_terms"))
+
+        self.assertTrue(callable_accepts_kwarg(kwonly_fn, "subject_terms"))
+        self.assertFalse(callable_accepts_kwarg(kwonly_fn, "other_kwarg"))
+
+        self.assertTrue(callable_accepts_kwarg(kwargs_fn, "subject_terms"))
+        self.assertTrue(callable_accepts_kwarg(kwargs_fn, "any_arbitrary_kwarg"))
+
+        self.assertFalse(callable_accepts_kwarg(posonly_fn, "subject_terms"))
+        self.assertFalse(callable_accepts_kwarg(None, "subject_terms"))
+        self.assertFalse(callable_accepts_kwarg("not_a_callable", "subject_terms"))
+
+    def test_internal_type_error_from_provider_propagates(self) -> None:
+        """Internal TypeError from keyword-capable provider is NOT swallowed or retried."""
+        class DefectiveProvider:
+            """Provider that accepts subject_terms, but raises an internal TypeError."""
+            def search(self, query: str, max_results: int = 5, *, subject_terms=None):
+                if subject_terms is not None:
+                    raise TypeError("Internal scoring defect: 'NoneType' object is not subscriptable")
+                return [
+                    SearchResult(
+                        url="https://defect.example.com",
+                        title="Swallowed Result",
+                        snippet="Should never be returned",
+                        domain="defect.example.com",
+                    )
+                ]
+
+        client = SearchClient(provider=DefectiveProvider())
+        with self.assertRaises(TypeError) as ctx:
+            client.search("test query", subject_terms=("water",))
+
+        self.assertIn("Internal scoring defect", str(ctx.exception))
+
+    def test_kwargs_provider_receives_subject_terms(self) -> None:
+        """Callable accepting **kwargs is called with subject_terms."""
+        received_kwargs = {}
+
+        class KwargsProvider:
+            def search(self, query: str, max_results: int = 5, **kwargs):
+                received_kwargs.update(kwargs)
+                return [
+                    SearchResult(
+                        url="https://kwargs.example.com",
+                        title="Kwargs Result",
+                        snippet="Snippet",
+                        domain="kwargs.example.com",
+                    )
+                ]
+
+        client = SearchClient(provider=KwargsProvider())
+        results = client.search("test query", subject_terms=("water purification",))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(received_kwargs.get("subject_terms"), ("water purification",))
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -15,6 +15,7 @@ from src.market_research.search_client import (
     SearchProvider,
     SearchProviderError,
     SearchQueryValidationError,
+    callable_accepts_kwarg,
 )
 from src.market_research.search_models import SearchResult
 
@@ -89,6 +90,8 @@ class FallbackSearchProvider:
         self,
         query: str,
         max_results: int = DEFAULT_MAX_RESULTS,
+        *,
+        subject_terms: Optional[Sequence[str]] = None,
     ) -> tuple[SearchResult, ...]:
         """Execute search query through providers in configured order until usable results are obtained.
 
@@ -96,7 +99,7 @@ class FallbackSearchProvider:
             1. Validate query string and max_results constraints.
             2. Iterate through configured providers in order.
             3. For each provider:
-               a. Call provider.search(query, max_results).
+               a. Call provider.search(query, max_results, subject_terms=subject_terms).
                b. Filter valid SearchResult objects with HTTP/HTTPS URLs.
                c. Deduplicate results by URL while preserving order.
                d. If at least one usable result is found, cap at max_results and return immediately.
@@ -106,6 +109,7 @@ class FallbackSearchProvider:
         Args:
             query: Non-empty search query string.
             max_results: Maximum number of search results requested (default 10, between 1 and 100).
+            subject_terms: Optional active domain subject vocabulary for relevance filtering.
 
         Returns:
             tuple[SearchResult, ...]: Deduplicated search results from the first successful provider.
@@ -137,7 +141,19 @@ class FallbackSearchProvider:
             provider_name = getattr(provider, "name", None) or type(provider).__name__
 
             try:
-                raw_results = provider.search(clean_query, max_results)
+                if subject_terms is not None and callable_accepts_kwarg(
+                    provider.search, "subject_terms"
+                ):
+                    raw_results = provider.search(
+                        clean_query,
+                        max_results,
+                        subject_terms=subject_terms,
+                    )
+                else:
+                    raw_results = provider.search(clean_query, max_results)
+            except TypeError:
+                # Do not mask internal programming errors
+                raise
             except Exception as exc:
                 logger.warning(
                     "Fallback provider '%s' failed for query '%s': %s",
@@ -227,43 +243,55 @@ class FallbackSearchProvider:
 
 def create_default_search_provider(
     ddg_provider: Optional[SearchProvider] = None,
+    google_news_provider: Optional[SearchProvider] = None,
     tavily_provider: Optional[SearchProvider] = None,
     tavily_api_key: Optional[str] = None,
+    enable_google_news: bool = True,
+    google_news_subject_terms: Optional[Sequence[str]] = None,
 ) -> SearchProvider:
     """Create the default search discovery provider configuration for web market research.
 
-    DuckDuckGo is always configured as the primary search provider.
-    Tavily is configured as the secondary fallback provider ONLY when its required
+    DuckDuckGo is configured as the primary search provider.
+    Google News RSS is configured as the secondary fallback provider, so Google News
+    is tried when DuckDuckGo raises an error (such as a challenge) or returns no usable results.
+    Tavily is configured as an additional tertiary fallback provider ONLY when its required
     API credentials are available (either via parameter or TAVILY_API_KEY environment variable).
-    If Tavily credentials are not configured, only DuckDuckGo is used.
 
     Args:
         ddg_provider: Optional custom primary SearchProvider (defaults to DuckDuckGoHTMLSearchProvider).
+        google_news_provider: Optional custom GoogleNewsRSSSearchProvider.
         tavily_provider: Optional custom fallback SearchProvider.
         tavily_api_key: Optional Tavily API key override.
+        enable_google_news: Whether to include Google News RSS as automatic fallback (default True).
+        google_news_subject_terms: Optional subject terms for Google News relevance filtering.
 
     Returns:
-        SearchProvider: Either a single DuckDuckGo provider or a FallbackSearchProvider composite.
+        SearchProvider: FallbackSearchProvider composite or single provider.
     """
     from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
+    from src.market_research.google_news_provider import GoogleNewsRSSSearchProvider
     from src.market_research.tavily_provider import TavilySearchProvider
 
     primary = ddg_provider or DuckDuckGoHTMLSearchProvider()
+    providers: list[SearchProvider] = [primary]
+
+    if enable_google_news:
+        gnews = google_news_provider or GoogleNewsRSSSearchProvider(subject_terms=google_news_subject_terms)
+        providers.append(gnews)
 
     if tavily_provider is not None:
-        return FallbackSearchProvider([primary, tavily_provider])
+        providers.append(tavily_provider)
+    else:
+        resolved_tavily = TavilySearchProvider(api_key=tavily_api_key)
+        if resolved_tavily.is_configured:
+            logger.info(
+                "Tavily API key is configured. Initializing FallbackSearchProvider with Tavily fallback."
+            )
+            providers.append(resolved_tavily)
 
-    resolved_tavily = TavilySearchProvider(api_key=tavily_api_key)
-    if resolved_tavily.is_configured:
-        logger.info(
-            "Tavily API key is configured. Initializing FallbackSearchProvider with "
-            "DuckDuckGo (primary) and Tavily (fallback)."
-        )
-        return FallbackSearchProvider([primary, resolved_tavily])
+    if len(providers) == 1:
+        return providers[0]
 
-    logger.info(
-        "Tavily API key is not configured (TAVILY_API_KEY not set). "
-        "Using DuckDuckGoHTMLSearchProvider as sole provider."
-    )
-    return primary
+    return FallbackSearchProvider(providers)
+
 

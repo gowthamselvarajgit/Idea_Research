@@ -225,9 +225,13 @@ class _DuckDuckGoHTMLParser(HTMLParser):
         clean_title = " ".join(html.unescape(raw_title).split())
         clean_snippet = " ".join(html.unescape(raw_snippet).split())
 
-        if not clean_title or not clean_snippet:
+        if not clean_title:
             self._reset_current()
             return
+
+        # If snippet is missing or empty, retain result using title as fallback snippet
+        if not clean_snippet:
+            clean_snippet = clean_title
 
         dest_url = decode_duckduckgo_url(self._current_url)
         if not dest_url:
@@ -338,6 +342,8 @@ class _DuckDuckGoHTMLParser(HTMLParser):
 class DuckDuckGoHTMLSearchProvider:
     """Real search discovery provider executing queries against DuckDuckGo HTML endpoint."""
 
+    name: str = "DuckDuckGoHTMLSearchProvider"
+
     def __init__(
         self,
         endpoint: str = DUCKDUCKGO_HTML_ENDPOINT,
@@ -408,8 +414,10 @@ class DuckDuckGoHTMLSearchProvider:
             method="POST",
         )
 
+        response_status: Optional[int] = 200
         try:
             if self.http_transport is not None:
+                response_status = 200
                 raw_response = self.http_transport(req, self.timeout)
                 if isinstance(raw_response, bytes):
                     html_content = raw_response.decode("utf-8", errors="replace")
@@ -417,6 +425,7 @@ class DuckDuckGoHTMLSearchProvider:
                     html_content = raw_response
             else:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    response_status = getattr(resp, "status", None) or resp.getcode()
                     encoding = resp.headers.get_content_charset() or "utf-8"
                     html_content = resp.read().decode(encoding, errors="replace")
                     # If DuckDuckGo challenged with HTTP 202, retry with fresh request object
@@ -432,6 +441,7 @@ class DuckDuckGoHTMLSearchProvider:
                                 method="POST",
                             )
                             with urllib.request.urlopen(retry_req, timeout=self.timeout) as retry_resp:
+                                response_status = getattr(retry_resp, "status", None) or retry_resp.getcode()
                                 retry_enc = retry_resp.headers.get_content_charset() or "utf-8"
                                 html_content = retry_resp.read().decode(retry_enc, errors="replace")
                         except Exception as retry_err:
@@ -468,4 +478,22 @@ class DuckDuckGoHTMLSearchProvider:
         parser.feed(html_content)
         parser.close()
 
+        if len(parser.results) == 0:
+            if is_duckduckgo_challenge_page(html_content):
+                logger.warning(
+                    "DuckDuckGo returned an anti-bot challenge page for query '%s' (status=%s).",
+                    clean_query,
+                    response_status,
+                )
+                raise DuckDuckGoChallengeError(
+                    f"DuckDuckGo returned an anti-bot challenge or verification page for query '{clean_query}'.",
+                    status_code=response_status,
+                )
+            logger.warning(
+                "DuckDuckGo returned 0 parsed results for query '%s' (HTML length: %d bytes).",
+                clean_query,
+                len(html_content),
+            )
+
         return parser.results[:max_results]
+

@@ -1,21 +1,29 @@
 """Focused unit tests for the generic domain-agnostic ResearchOrchestrator."""
 
+from collections.abc import Sequence
 from unittest.mock import MagicMock
 import unittest
 
 from src.evaluation.evaluation_service import OpportunityEvaluationService
 from src.evaluation.models import OpportunityEvaluationRecord
+from src.market_research.fallback_search_provider import FallbackSearchProvider
+from src.market_research.google_news_provider import GoogleNewsRSSSearchProvider
 from src.market_research.models import MarketResearchRecord
 from src.market_research.research_query_generator import (
     GeneratedResearchQueries,
     ResearchQueryGenerator,
     ResearchQueryItem,
 )
+from src.market_research.search_client import SearchClient, SearchProvider
+from src.market_research.search_models import SearchResult
 from src.market_research.search_source_collector import (
     SearchSourceCollectionResult,
     SearchSourceCollector,
 )
-from src.market_research.source_collection import SourceCollectionFailure
+from src.market_research.source_collection import (
+    SourceCollectionFailure,
+    WebSourceCollector,
+)
 from src.market_research.source_models import WebResearchSource
 from src.market_research.web_evidence_analyzer import WebEvidenceAnalyzer
 from src.opportunities.models import OpportunityRecord
@@ -361,5 +369,474 @@ class TestResearchOrchestrator(unittest.TestCase):
         self.assertEqual(len(d["extracted_problems"]), 1)
 
 
+class TestProductionQueryAnchoringAndDomainVocabulary(unittest.TestCase):
+    """Focused offline unit tests for production query anchoring and domain vocabulary propagation."""
+
+    def test_production_generated_queries_use_subject_anchoring(self) -> None:
+        """Production query generation enables quote_subject_anchor=True and passes anchored queries."""
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-anchor-1",
+            theme="Water",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_problem_extraction_service = MagicMock(spec=ProblemExtractionService)
+        mock_problem_extraction_service.extract_problems_for_run.return_value = []
+        mock_opportunity_synthesis_service = MagicMock(spec=OpportunitySynthesisService)
+        mock_opportunity_synthesis_service.synthesize_opportunity_for_run.return_value = None
+        mock_opportunity_evaluation_service = MagicMock(spec=OpportunityEvaluationService)
+        mock_opportunity_evaluation_service.evaluate_opportunity.return_value = None
+        mock_search_collector = MagicMock(spec=SearchSourceCollector)
+        mock_search_collector.collect_for_query.return_value = SearchSourceCollectionResult(
+            query="test", sources=(), failures=()
+        )
+        mock_web_evidence_analyzer = MagicMock(spec=WebEvidenceAnalyzer)
+        mock_web_evidence_analyzer.analyze.return_value = []
+
+        # 1. Use real ResearchQueryGenerator to verify actual queries executed by the search collector
+        real_query_generator = ResearchQueryGenerator()
+
+        orchestrator = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=mock_problem_extraction_service,
+            opportunity_synthesis_service=mock_opportunity_synthesis_service,
+            opportunity_evaluation_service=mock_opportunity_evaluation_service,
+            query_generator=real_query_generator,
+            search_collector=mock_search_collector,
+            web_evidence_analyzer=mock_web_evidence_analyzer,
+        )
+
+        domain_config = ResearchDomainConfig(
+            domain_name="Industrial Desalination",
+            themes=("membrane biofouling", "reverse osmosis flux"),
+            description="Desalination filtration research",
+        )
+
+        result = orchestrator.run_research(domain_config, max_web_queries=4)
+
+        self.assertTrue(result.is_success)
+        self.assertGreater(mock_search_collector.collect_for_query.call_count, 0)
+        executed_queries = [
+            call.kwargs.get("query") if "query" in call.kwargs else call.args[0]
+            for call in mock_search_collector.collect_for_query.call_args_list
+        ]
+        for q in executed_queries:
+            self.assertTrue(
+                q.startswith('"membrane biofouling"') or q.startswith('"reverse osmosis flux"'),
+                f"Query '{q}' is missing quoted subject anchor.",
+            )
+
+        # 2. Verify quote_subject_anchor=True keyword is explicitly passed to query_generator
+        mock_q_gen = MagicMock(spec=ResearchQueryGenerator)
+        mock_q_gen.generate_queries.return_value = GeneratedResearchQueries(
+            domain_name="Industrial Desalination",
+            queries=('"membrane biofouling" competitors',),
+            items=(ResearchQueryItem('"membrane biofouling" competitors', "competitor", "membrane biofouling"),),
+        )
+        orchestrator.query_generator = mock_q_gen
+        orchestrator.run_research(domain_config, max_web_queries=2)
+        mock_q_gen.generate_queries.assert_called_once_with(
+            domain_config,
+            max_queries=2,
+            quote_subject_anchor=True,
+        )
+
+    def test_google_news_provider_receives_vocabulary_from_active_domain(self) -> None:
+        """The active domain's subject terms are propagated to the Google News RSS provider."""
+        rss_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+        <channel>
+          <title>Google News</title>
+          <item>
+            <title>Advanced Desalination: Solving Membrane Biofouling in Reverse Osmosis</title>
+            <link>https://waternews.example.com/biofouling-breakthrough</link>
+            <pubDate>Fri, 09 Oct 2026 12:00:00 GMT</pubDate>
+            <description>&lt;a href="https://waternews.example.com/biofouling-breakthrough"&gt;Breakthrough in membrane biofouling filtration.&lt;/a&gt;</description>
+            <source url="https://waternews.example.com">Water News Daily</source>
+          </item>
+        </channel>
+        </rss>"""
+
+        gnews_provider = GoogleNewsRSSSearchProvider(
+            http_transport=lambda req, to: rss_xml,
+            subject_terms=None,
+        )
+        search_collector = SearchSourceCollector(
+            search_provider=gnews_provider,
+            source_collector=MagicMock(spec=WebSourceCollector),
+        )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-vocab-1",
+            theme="Water",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_problem_extraction_service = MagicMock(spec=ProblemExtractionService)
+        mock_problem_extraction_service.extract_problems_for_run.return_value = []
+        mock_opportunity_synthesis_service = MagicMock(spec=OpportunitySynthesisService)
+        mock_opportunity_synthesis_service.synthesize_opportunity_for_run.return_value = None
+        mock_opportunity_evaluation_service = MagicMock(spec=OpportunityEvaluationService)
+        mock_opportunity_evaluation_service.evaluate_opportunity.return_value = None
+        mock_web_evidence_analyzer = MagicMock(spec=WebEvidenceAnalyzer)
+        mock_web_evidence_analyzer.analyze.return_value = []
+
+        domain_config = ResearchDomainConfig(
+            domain_name="Industrial Desalination",
+            themes=("membrane biofouling", "reverse osmosis flux"),
+            description="Desalination filtration research",
+        )
+
+        orchestrator = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=mock_problem_extraction_service,
+            opportunity_synthesis_service=mock_opportunity_synthesis_service,
+            opportunity_evaluation_service=mock_opportunity_evaluation_service,
+            query_generator=ResearchQueryGenerator(),
+            search_collector=search_collector,
+            web_evidence_analyzer=mock_web_evidence_analyzer,
+        )
+
+        orchestrator.run_research(domain_config, max_web_queries=1)
+
+        diag = gnews_provider.diagnostics
+        self.assertIsNotNone(diag)
+        self.assertEqual(diag.accepted_count, 1)
+        self.assertIn("membrane biofouling", diag.decisions[0].matched_terms)
+        self.assertIn("Matched configured subject term", diag.decisions[0].reason)
+
+    def test_different_domain_configurations_do_not_contaminate_one_another(self) -> None:
+        """Sequential runs with different domains do not leak vocabulary or state across runs."""
+        water_rss_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+        <channel>
+          <title>Google News</title>
+          <item>
+            <title>Industrial Desalination Plant Expands Reverse Osmosis Capacity</title>
+            <link>https://water.example.com/ro-plant</link>
+            <pubDate>Fri, 09 Oct 2026 12:00:00 GMT</pubDate>
+            <description>&lt;a href="https://water.example.com/ro-plant"&gt;Desalination capacity expands.&lt;/a&gt;</description>
+            <source url="https://water.example.com">Water World</source>
+          </item>
+        </channel>
+        </rss>"""
+
+        cosmetics_rss_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+        <channel>
+          <title>Google News</title>
+          <item>
+            <title>New AI Skincare Diagnostic Startup Launches Retinol Formulation</title>
+            <link>https://cosmetics.example.com/ai-skincare</link>
+            <pubDate>Fri, 09 Oct 2026 12:00:00 GMT</pubDate>
+            <description>&lt;a href="https://cosmetics.example.com/ai-skincare"&gt;AI skincare with retinol.&lt;/a&gt;</description>
+            <source url="https://cosmetics.example.com">Beauty Tech</source>
+          </item>
+        </channel>
+        </rss>"""
+
+        current_xml = [water_rss_xml]
+
+        shared_gnews_provider = GoogleNewsRSSSearchProvider(
+            http_transport=lambda req, to: current_xml[0],
+            subject_terms=None,
+        )
+        shared_collector = SearchSourceCollector(
+            search_provider=shared_gnews_provider,
+            source_collector=MagicMock(spec=WebSourceCollector),
+        )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-isolation",
+            theme="Test",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_problem_extraction_service = MagicMock(spec=ProblemExtractionService)
+        mock_problem_extraction_service.extract_problems_for_run.return_value = []
+        mock_opportunity_synthesis_service = MagicMock(spec=OpportunitySynthesisService)
+        mock_opportunity_synthesis_service.synthesize_opportunity_for_run.return_value = None
+        mock_opportunity_evaluation_service = MagicMock(spec=OpportunityEvaluationService)
+        mock_opportunity_evaluation_service.evaluate_opportunity.return_value = None
+        mock_web_evidence_analyzer = MagicMock(spec=WebEvidenceAnalyzer)
+        mock_web_evidence_analyzer.analyze.return_value = []
+
+        orchestrator = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=mock_problem_extraction_service,
+            opportunity_synthesis_service=mock_opportunity_synthesis_service,
+            opportunity_evaluation_service=mock_opportunity_evaluation_service,
+            query_generator=ResearchQueryGenerator(),
+            search_collector=shared_collector,
+            web_evidence_analyzer=mock_web_evidence_analyzer,
+        )
+
+        water_config = ResearchDomainConfig(
+            domain_name="Water Treatment",
+            themes=("desalination", "water purification"),
+            description="Water research",
+        )
+        cosmetics_config = ResearchDomainConfig(
+            domain_name="Cosmetics",
+            themes=("skincare", "retinol"),
+            description="Cosmetics research",
+        )
+
+        # Run 1: Water domain
+        orchestrator.run_research(water_config, max_web_queries=1)
+        water_diag = shared_gnews_provider.diagnostics
+        self.assertIsNotNone(water_diag)
+        self.assertEqual(water_diag.accepted_count, 1)
+        self.assertIn("desalination", water_diag.decisions[0].matched_terms)
+
+        # Assert shared provider state was not permanently modified
+        self.assertIsNone(shared_gnews_provider.subject_terms)
+
+        # Switch transport XML to cosmetics XML
+        current_xml[0] = cosmetics_rss_xml
+
+        # Run 2: Cosmetics domain on the SAME orchestrator and search stack
+        orchestrator.run_research(cosmetics_config, max_web_queries=1)
+        cosmetics_diag = shared_gnews_provider.diagnostics
+        self.assertIsNotNone(cosmetics_diag)
+        self.assertEqual(cosmetics_diag.accepted_count, 1)
+        self.assertIn("skincare", cosmetics_diag.decisions[0].matched_terms)
+
+        # Ensure NO residual water terms in cosmetics decision
+        self.assertNotIn("desalination", cosmetics_diag.decisions[0].matched_terms)
+        self.assertNotIn("water purification", cosmetics_diag.decisions[0].matched_terms)
+
+        # Assert base provider attribute is still None
+        self.assertIsNone(shared_gnews_provider.subject_terms)
+
+    def test_existing_custom_provider_and_fallback_behaviour_remains_compatible(self) -> None:
+        """Custom 2-arg providers, fallback composites, and legacy query generators work without error."""
+        class LegacyCustomSearchProvider:
+            """Provider implementing only traditional search(query, max_results)."""
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int]] = []
+
+            def search(self, query: str, max_results: int = 5) -> Sequence[SearchResult]:
+                self.calls.append((query, max_results))
+                return [
+                    SearchResult(
+                        url="https://legacy.example.com/article",
+                        title="Legacy Result Title",
+                        snippet="Legacy snippet text.",
+                        domain="legacy.example.com",
+                    )
+                ]
+
+        legacy_provider = LegacyCustomSearchProvider()
+        fallback_composite = FallbackSearchProvider([legacy_provider])
+        client = SearchClient(provider=fallback_composite)
+
+        # 1. Calling search directly with subject_terms gracefully degrades for legacy provider
+        results = client.search(
+            query="test query",
+            max_results=3,
+            subject_terms=("water purification", "desalination"),
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].url, "https://legacy.example.com/article")
+        self.assertEqual(legacy_provider.calls, [("test query", 3)])
+
+        # 2. SearchSourceCollector works with legacy provider
+        collector = SearchSourceCollector(
+            search_provider=legacy_provider,
+            source_collector=MagicMock(spec=WebSourceCollector),
+        )
+        res = collector.collect_for_query(
+            "test query",
+            max_results=2,
+            subject_terms=("water purification",),
+        )
+        self.assertEqual(len(res.search_results), 1)
+
+        # 3. Legacy query generator without quote_subject_anchor arg handled gracefully in orchestrator
+        class LegacyQueryGenerator:
+            def generate_queries(self, domain_config, max_queries=10):
+                return GeneratedResearchQueries(
+                    domain_name=domain_config.domain_name,
+                    queries=("legacy unquoted query",),
+                    items=(ResearchQueryItem("legacy unquoted query", "other", "legacy"),),
+                )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-legacy",
+            theme="Test",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_collector = MagicMock(spec=SearchSourceCollector)
+        mock_collector.collect_for_query.return_value = SearchSourceCollectionResult(
+            query="legacy unquoted query", sources=(), failures=()
+        )
+
+        orch = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=MagicMock(spec=ProblemExtractionService),
+            opportunity_synthesis_service=MagicMock(spec=OpportunitySynthesisService),
+            opportunity_evaluation_service=MagicMock(spec=OpportunityEvaluationService),
+            query_generator=LegacyQueryGenerator(),
+            search_collector=mock_collector,
+            web_evidence_analyzer=MagicMock(spec=WebEvidenceAnalyzer),
+        )
+        orch_res = orch.run_research(
+            ResearchDomainConfig(domain_name="D", themes=("T",), description="Desc")
+        )
+        self.assertTrue(orch_res.is_success)
+        self.assertEqual(orch_res.query_count, 1)
+
+        # 4. Caller not specifying quote_subject_anchor gets unquoted queries by default
+        default_gen = ResearchQueryGenerator()
+        default_queries = default_gen.generate_queries(
+            ResearchDomainConfig(domain_name="D", themes=("purification",), description="Desc"),
+            max_queries=2,
+        )
+        self.assertFalse(default_queries[0].startswith('"'))
+
+    def test_internal_type_error_from_query_generator_propagates(self) -> None:
+        """Internal TypeError from keyword-capable query generator propagates and is NOT swallowed."""
+        class DefectiveQueryGenerator:
+            def generate_queries(self, domain_config, max_queries=10, quote_subject_anchor=False):
+                if quote_subject_anchor:
+                    raise TypeError("Internal bug in query template: format string mismatch")
+                return GeneratedResearchQueries(
+                    domain_name=domain_config.domain_name,
+                    queries=("unquoted fallback",),
+                    items=(ResearchQueryItem("unquoted fallback", "other", "term"),),
+                )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-type-err",
+            theme="Test",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+
+        orch = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=MagicMock(spec=ProblemExtractionService),
+            opportunity_synthesis_service=MagicMock(spec=OpportunitySynthesisService),
+            opportunity_evaluation_service=MagicMock(spec=OpportunityEvaluationService),
+            query_generator=DefectiveQueryGenerator(),
+            search_collector=MagicMock(spec=SearchSourceCollector),
+            web_evidence_analyzer=MagicMock(spec=WebEvidenceAnalyzer),
+        )
+
+        domain_config = ResearchDomainConfig(domain_name="D", themes=("T",), description="Desc")
+        with self.assertRaises(TypeError) as ctx:
+            orch.run_research(domain_config)
+
+        self.assertIn("Internal bug in query template", str(ctx.exception))
+
+    def test_internal_type_error_from_provider_in_fallback_composite_propagates(self) -> None:
+        """Internal TypeError from keyword-capable provider inside FallbackSearchProvider propagates."""
+        class DefectiveSearchProvider:
+            name = "DefectiveSearchProvider"
+
+            def search(self, query: str, max_results: int = 5, *, subject_terms=None):
+                if subject_terms is not None:
+                    raise TypeError("Internal scoring bug: 'NoneType' object is not subscriptable")
+                return [
+                    SearchResult(
+                        url="https://defect.example.com",
+                        title="Swallowed Result",
+                        snippet="Snippet",
+                        domain="defect.example.com",
+                    )
+                ]
+
+        fallback = FallbackSearchProvider([DefectiveSearchProvider()])
+        with self.assertRaises(TypeError) as ctx:
+            fallback.search("test query", subject_terms=("water",))
+
+        self.assertIn("Internal scoring bug", str(ctx.exception))
+
+    def test_kwargs_query_generator_handled_correctly(self) -> None:
+        """Query generator accepting **kwargs receives quote_subject_anchor=True."""
+        received_kwargs = {}
+
+        class KwargsQueryGenerator:
+            def generate_queries(self, domain_config, max_queries=10, **kwargs):
+                received_kwargs.update(kwargs)
+                return GeneratedResearchQueries(
+                    domain_name=domain_config.domain_name,
+                    queries=('"theme" query',),
+                    items=(ResearchQueryItem('"theme" query', "competitor", "theme"),),
+                )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-kwargs",
+            theme="Test",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_collector = MagicMock(spec=SearchSourceCollector)
+        mock_collector.collect_for_query.return_value = SearchSourceCollectionResult(
+            query="test", sources=(), failures=()
+        )
+
+        orch = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=MagicMock(spec=ProblemExtractionService),
+            opportunity_synthesis_service=MagicMock(spec=OpportunitySynthesisService),
+            opportunity_evaluation_service=MagicMock(spec=OpportunityEvaluationService),
+            query_generator=KwargsQueryGenerator(),
+            search_collector=mock_collector,
+            web_evidence_analyzer=MagicMock(spec=WebEvidenceAnalyzer),
+        )
+
+        orch.run_research(
+            ResearchDomainConfig(domain_name="D", themes=("theme",), description="Desc")
+        )
+        self.assertTrue(received_kwargs.get("quote_subject_anchor"))
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
