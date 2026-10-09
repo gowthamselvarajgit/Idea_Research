@@ -10,6 +10,7 @@ import logging
 from typing import Any, Final, Optional, Sequence
 
 from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
+from src.market_research.fallback_search_provider import create_default_search_provider
 from src.market_research.search_client import (
     DEFAULT_MAX_RESULTS,
     SearchClient,
@@ -116,7 +117,7 @@ class SearchSourceCollector:
             elif search_provider_or_client is not None:
                 active_client = SearchClient(provider=search_provider_or_client)
             else:
-                active_client = SearchClient(provider=DuckDuckGoHTMLSearchProvider())
+                active_client = SearchClient(provider=create_default_search_provider())
 
         self.search_client = active_client
         self.source_collector = source_collector or collector or WebSourceCollector()

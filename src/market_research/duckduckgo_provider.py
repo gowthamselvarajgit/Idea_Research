@@ -9,6 +9,7 @@ import html
 import http.cookiejar
 import logging
 import socket
+import re
 from typing import Any, Callable, Optional, Sequence
 import urllib.error
 import urllib.parse
@@ -31,6 +32,14 @@ DEFAULT_TIMEOUT_SECONDS: float = 10.0
 class DuckDuckGoSearchError(SearchProviderError):
     """Base exception for DuckDuckGo HTML search provider failures."""
     pass
+
+
+class DuckDuckGoChallengeError(DuckDuckGoSearchError):
+    """Raised when DuckDuckGo returns an anti-bot challenge or verification page."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class DuckDuckGoHTTPError(DuckDuckGoSearchError):
@@ -122,6 +131,68 @@ def extract_domain_from_url(url: str) -> Optional[str]:
         return domain or netloc
     except Exception:
         return None
+
+
+CHALLENGE_INDICATORS: tuple[str, ...] = (
+    "anomaly-detected",
+    "cf-browser-verification",
+    "cf-challenge",
+    "cf-turnstile",
+    "challenge-form",
+    "challenge-running",
+    "bots are not allowed",
+    "automated traffic",
+    "verify you are a human",
+    "verify that you are human",
+    "unusual traffic from your computer network",
+    "unusual traffic from your network",
+    "please complete the security check",
+    "blocked because of unusual activity",
+)
+
+
+def is_duckduckgo_challenge_page(html_text: str) -> bool:
+    """Detect whether HTML response is an anti-bot challenge or verification page.
+
+    Avoids false positives by requiring explicit compound signatures or structured
+    challenge elements, rather than isolated generic words like 'challenge'.
+    """
+    if not html_text or not isinstance(html_text, str):
+        return False
+
+    lowered = html_text.lower()
+
+    # 1. Title tag inspection for explicit challenge headings
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", lowered, re.DOTALL)
+    if title_match:
+        title_content = title_match.group(1).strip()
+        if any(term in title_content for term in (
+            "anomaly detected",
+            "bot check",
+            "security check",
+            "human verification",
+            "attention required",
+            "cloudflare",
+        )):
+            return True
+
+    # 2. Structural challenge forms / elements
+    if any(sig in lowered for sig in (
+        'id="challenge-form"',
+        'id="challenge-running"',
+        'class="cf-browser-verification"',
+        'class="cf-challenge"',
+        'class="challenge-form"',
+        'name="cf-turnstile-response"',
+    )):
+        return True
+
+    # 3. Explicit multi-word anti-bot text indicators
+    for phrase in CHALLENGE_INDICATORS:
+        if phrase in lowered:
+            return True
+
+    return False
 
 
 class _DuckDuckGoHTMLParser(HTMLParser):

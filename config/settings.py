@@ -45,3 +45,18 @@ def get_epo_config() -> dict[str, Optional[str]]:
         "consumer_key": os.getenv("EPO_CONSUMER_KEY"),
         "consumer_secret": os.getenv("EPO_CONSUMER_SECRET"),
     }
+
+
+# Tavily Search API Configuration
+TAVILY_DEFAULT_API_URL = "https://api.tavily.com/search"
+TAVILY_API_BASE_URL = os.getenv("TAVILY_API_BASE_URL", TAVILY_DEFAULT_API_URL)
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+
+def get_tavily_config() -> dict[str, Optional[str]]:
+    """Retrieve current Tavily configuration dynamically from environment."""
+    return {
+        "api_key": os.getenv("TAVILY_API_KEY"),
+        "base_url": os.getenv("TAVILY_API_BASE_URL", TAVILY_DEFAULT_API_URL),
+    }
+

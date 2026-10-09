@@ -34,6 +34,21 @@ from src.market_research.duckduckgo_provider import (
     DuckDuckGoSearchError,
     DuckDuckGoTimeoutError,
 )
+from src.market_research.fallback_search_provider import (
+    AllProvidersFailedError,
+    FallbackSearchProvider,
+    FallbackSearchProviderError,
+    create_default_search_provider,
+)
+from src.market_research.tavily_provider import (
+    TavilyAuthenticationError,
+    TavilyHTTPError,
+    TavilyNetworkError,
+    TavilyRateLimitError,
+    TavilySearchError,
+    TavilySearchProvider,
+    TavilyTimeoutError,
+)
 from src.market_research.research_prompt import (
     MARKET_RESEARCH_SYSTEM_PROMPT,
     format_market_research_user_prompt,
@@ -116,12 +131,16 @@ from src.market_research.web_evidence_analyzer import (
 __all__ = [
     "ALLOWED_RELEVANCE",
     "ALLOWED_SOURCE_TYPES",
+    "AllProvidersFailedError",
+    "create_default_search_provider",
     "DEFAULT_RESEARCH_CATEGORIES",
     "DuckDuckGoHTMLSearchProvider",
     "DuckDuckGoHTTPError",
     "DuckDuckGoNetworkError",
     "DuckDuckGoSearchError",
     "DuckDuckGoTimeoutError",
+    "FallbackSearchProvider",
+    "FallbackSearchProviderError",
     "GeneratedResearchQueries",
     "InvalidOpportunityError",
     "InvalidOpportunityIdError",
@@ -157,6 +176,13 @@ __all__ = [
     "SearchSourceCollectorError",
     "SourceCollectionFailure",
     "SourceCollectionResult",
+    "TavilyAuthenticationError",
+    "TavilyHTTPError",
+    "TavilyNetworkError",
+    "TavilyRateLimitError",
+    "TavilySearchError",
+    "TavilySearchProvider",
+    "TavilyTimeoutError",
     "WebEvidenceAnalyzer",
     "WebEvidenceAnalyzerError",
     "WebResearchSource",
