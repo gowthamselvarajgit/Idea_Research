@@ -5,9 +5,10 @@ destination URLs, forwards them to WebSourceCollector, and aggregates collected
 WebResearchSource records along with individual collection failures.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import logging
 from typing import Any, Final, Optional, Sequence
+import urllib.parse
 
 from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
 from src.market_research.fallback_search_provider import create_default_search_provider
@@ -82,6 +83,82 @@ class SearchSourceCollectionResult:
             "failure_count": self.failure_count,
             "total_count": self.total_count,
         }
+
+
+def _normalize_url_for_matching(url: Optional[str]) -> str:
+    """Normalize URL for resilient lookup while preserving scheme, netloc, path, and query."""
+    if not url or not isinstance(url, str):
+        return ""
+    clean = url.strip()
+    try:
+        parsed = urllib.parse.urlparse(clean)
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+        if netloc.startswith("www.") and len(netloc) > 4:
+            netloc = netloc[4:]
+        path = parsed.path.rstrip("/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"{scheme}://{netloc}{path}{query}"
+    except Exception:
+        return clean.strip().lower().rstrip("/")
+
+
+def _enrich_source_with_search_metadata(
+    source: WebResearchSource,
+    search_result: SearchResult,
+    query: str,
+) -> WebResearchSource:
+    """Enrich a WebResearchSource with discovery metadata from a matching SearchResult.
+
+    Preserves existing crawler metadata in source.raw_data and adds search discovery
+    attributes into an immutable replacement WebResearchSource via dataclasses.replace.
+    """
+    existing_raw = dict(source.raw_data) if isinstance(source.raw_data, dict) else {}
+    merged_raw = dict(existing_raw)
+
+    search_query = query.strip() or search_result.raw_data.get("query", "")
+    search_snippet = search_result.snippet
+    search_publisher = search_result.raw_data.get("publisher") or search_result.domain
+    search_engine = (
+        search_result.raw_data.get("engine")
+        or search_result.raw_data.get("source")
+        or "search"
+    )
+    search_url = search_result.url
+    relevance_reason = search_result.raw_data.get("relevance_reason")
+
+    # 1. Merge any extra metadata from search_result.raw_data without overwriting existing crawler keys
+    if isinstance(search_result.raw_data, dict):
+        for k, v in search_result.raw_data.items():
+            if k not in merged_raw:
+                merged_raw[k] = v
+
+    # 2. Add explicit standardized discovery metadata fields
+    discovery_fields = {
+        "search_query": search_query,
+        "search_snippet": search_snippet,
+        "search_publisher": search_publisher,
+        "search_engine": search_engine,
+        "search_url": search_url,
+        "original_search_url": search_url,
+    }
+    if relevance_reason is not None:
+        discovery_fields["relevance_reason"] = relevance_reason
+        discovery_fields["search_relevance_reason"] = relevance_reason
+
+    merged_raw.update(discovery_fields)
+
+    # 3. Add non-prefixed convenience aliases if not already present in crawler metadata
+    if "query" not in merged_raw and search_query:
+        merged_raw["query"] = search_query
+    if "snippet" not in merged_raw and search_snippet:
+        merged_raw["snippet"] = search_snippet
+    if "publisher" not in merged_raw and search_publisher:
+        merged_raw["publisher"] = search_publisher
+    if "engine" not in merged_raw and search_engine:
+        merged_raw["engine"] = search_engine
+
+    return replace(source, raw_data=merged_raw)
 
 
 class SearchSourceCollector:
@@ -233,10 +310,59 @@ class SearchSourceCollector:
             deduplicate=True,
         )
 
+        # 4. Correlate and enrich collected sources with search discovery metadata
+        exact_sr_map: dict[str, SearchResult] = {}
+        norm_sr_map: dict[str, SearchResult] = {}
+
+        for sr in search_results:
+            raw_sr_url = sr.url.strip()
+            if raw_sr_url and raw_sr_url not in exact_sr_map:
+                exact_sr_map[raw_sr_url] = sr
+            norm_sr_url = _normalize_url_for_matching(raw_sr_url)
+            if norm_sr_url and norm_sr_url not in norm_sr_map:
+                norm_sr_map[norm_sr_url] = sr
+
+        enriched_sources: list[WebResearchSource] = []
+        for source in collection_result.sources:
+            matched_sr: Optional[SearchResult] = None
+
+            candidate_urls: list[str] = []
+            if isinstance(source.raw_data, dict):
+                init_u = source.raw_data.get("initial_url")
+                if isinstance(init_u, str) and init_u.strip():
+                    candidate_urls.append(init_u.strip())
+            if isinstance(source.url, str) and source.url.strip():
+                candidate_urls.append(source.url.strip())
+            if isinstance(source.raw_data, dict):
+                fin_u = source.raw_data.get("final_url")
+                if isinstance(fin_u, str) and fin_u.strip() and fin_u.strip() not in candidate_urls:
+                    candidate_urls.append(fin_u.strip())
+
+            # Match priority 1: exact URL match
+            for cu in candidate_urls:
+                if cu in exact_sr_map:
+                    matched_sr = exact_sr_map[cu]
+                    break
+
+            # Match priority 2: normalized URL match
+            if matched_sr is None:
+                for cu in candidate_urls:
+                    norm_cu = _normalize_url_for_matching(cu)
+                    if norm_cu and norm_cu in norm_sr_map:
+                        matched_sr = norm_sr_map[norm_cu]
+                        break
+
+            if matched_sr is not None:
+                enriched_sources.append(
+                    _enrich_source_with_search_metadata(source, matched_sr, clean_query)
+                )
+            else:
+                enriched_sources.append(source)
+
         return SearchSourceCollectionResult(
             query=clean_query,
             search_results=tuple(search_results),
-            sources=collection_result.sources,
+            sources=tuple(enriched_sources),
             failures=collection_result.failures,
         )
 

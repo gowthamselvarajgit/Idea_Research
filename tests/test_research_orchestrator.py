@@ -22,6 +22,7 @@ from src.market_research.search_source_collector import (
 )
 from src.market_research.source_collection import (
     SourceCollectionFailure,
+    SourceCollectionResult,
     WebSourceCollector,
 )
 from src.market_research.source_models import WebResearchSource
@@ -834,6 +835,108 @@ class TestProductionQueryAnchoringAndDomainVocabulary(unittest.TestCase):
             ResearchDomainConfig(domain_name="D", themes=("theme",), description="Desc")
         )
         self.assertTrue(received_kwargs.get("quote_subject_anchor"))
+
+    def test_downstream_orchestration_receives_enriched_sources(self) -> None:
+        """Enriched WebResearchSource with search evidence metadata reaches orchestrator result and analyzer."""
+        mock_search_provider = MagicMock(spec=SearchProvider)
+        mock_search_provider.search.return_value = [
+            SearchResult(
+                url="https://aquamembrane.example.com/spec",
+                title="AquaMembrane Specifications",
+                snippet="Official specifications for AquaMembrane RO units.",
+                domain="aquamembrane.example.com",
+                raw_data={
+                    "publisher": "AquaMembrane Press",
+                    "engine": "google_news_rss",
+                    "relevance_reason": "Matched configured subject term: 'reverse osmosis'",
+                },
+            )
+        ]
+
+        mock_source_collector = MagicMock(spec=WebSourceCollector)
+        sample_web_source = WebResearchSource(
+            url="https://aquamembrane.example.com/spec",
+            title="AquaMembrane Specifications",
+            source_type="competitor",
+            publisher_or_domain="aquamembrane.example.com",
+            retrieved_content="Clean water membrane specs.",
+            retrieved_at="2026-10-10T10:00:00Z",
+            raw_data={
+                "initial_url": "https://aquamembrane.example.com/spec",
+                "final_url": "https://aquamembrane.example.com/spec",
+                "http_status": 200,
+                "content_type": "text/html",
+            },
+        )
+        mock_source_collector.collect_sources.return_value = SourceCollectionResult(
+            sources=(sample_web_source,),
+            failures=(),
+        )
+
+        real_search_collector = SearchSourceCollector(
+            search_provider=mock_search_provider,
+            source_collector=mock_source_collector,
+        )
+
+        mock_research_service = MagicMock(spec=ResearchService)
+        mock_research_service.run_patent_research.return_value = PatentResearchResult(
+            run_id="run-enrich-1",
+            theme="Water",
+            generated_queries=(),
+            executed_queries=(),
+            discovered_count=1,
+            ingested_count=1,
+            inserted_count=1,
+            existing_count=0,
+            linked_count=1,
+            final_run_status="completed",
+        )
+        mock_web_evidence_analyzer = MagicMock(spec=WebEvidenceAnalyzer)
+        mock_web_evidence_analyzer.analyze.return_value = []
+
+        orchestrator = ResearchOrchestrator(
+            research_service=mock_research_service,
+            problem_extraction_service=MagicMock(spec=ProblemExtractionService),
+            opportunity_synthesis_service=MagicMock(spec=OpportunitySynthesisService),
+            opportunity_evaluation_service=MagicMock(spec=OpportunityEvaluationService),
+            query_generator=ResearchQueryGenerator(),
+            search_collector=real_search_collector,
+            web_evidence_analyzer=mock_web_evidence_analyzer,
+        )
+
+        domain_config = ResearchDomainConfig(
+            domain_name="Industrial Desalination",
+            themes=("reverse osmosis",),
+            description="Desalination filtration research",
+        )
+
+        result = orchestrator.run_research(domain_config, max_web_queries=1)
+
+        self.assertTrue(result.is_success)
+        self.assertEqual(len(result.collected_web_sources), 1)
+        source = result.collected_web_sources[0]
+
+        # 1. Verify crawler metadata remains intact
+        self.assertEqual(source.raw_data.get("initial_url"), "https://aquamembrane.example.com/spec")
+        self.assertEqual(source.raw_data.get("final_url"), "https://aquamembrane.example.com/spec")
+        self.assertEqual(source.raw_data.get("http_status"), 200)
+        self.assertEqual(source.raw_data.get("content_type"), "text/html")
+
+        # 2. Verify search evidence discovery metadata is preserved
+        self.assertEqual(source.raw_data.get("search_snippet"), "Official specifications for AquaMembrane RO units.")
+        self.assertEqual(source.raw_data.get("search_publisher"), "AquaMembrane Press")
+        self.assertEqual(source.raw_data.get("search_engine"), "google_news_rss")
+        self.assertEqual(source.raw_data.get("relevance_reason"), "Matched configured subject term: 'reverse osmosis'")
+        self.assertEqual(source.raw_data.get("search_url"), "https://aquamembrane.example.com/spec")
+        self.assertTrue(bool(source.raw_data.get("search_query")))
+
+        # 3. Verify downstream web evidence analyzer received the enriched source
+        mock_web_evidence_analyzer.analyze.assert_called_once()
+        call_kwargs = mock_web_evidence_analyzer.analyze.call_args.kwargs
+        passed_sources = call_kwargs.get("sources") if "sources" in call_kwargs else mock_web_evidence_analyzer.analyze.call_args[0][1]
+        self.assertEqual(len(passed_sources), 1)
+        self.assertIs(passed_sources[0], source)
+        self.assertEqual(passed_sources[0].raw_data.get("search_engine"), "google_news_rss")
 
 
 if __name__ == "__main__":

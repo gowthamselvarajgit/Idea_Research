@@ -141,6 +141,12 @@ from src.market_research.web_evidence_analyzer import (
     format_web_source_evidence,
     format_web_sources_evidence,
 )
+from src.market_research.citation_grounding import (
+    build_source_url_lookup,
+    correlate_finding_with_sources,
+    correlate_findings_with_sources,
+    normalize_citation_url,
+)
 
 
 __all__ = [
@@ -222,14 +228,18 @@ __all__ = [
     "WebSourceInvalidURLError",
     "WebSourceNetworkError",
     "analyze_web_sources",
+    "build_source_url_lookup",
     "callable_accepts_kwarg",
     "collect_sources",
     "collect_sources_for_search_query",
+    "correlate_finding_with_sources",
+    "correlate_findings_with_sources",
     "fetch_source",
     "format_market_research_user_prompt",
     "format_web_source_evidence",
     "format_web_sources_evidence",
     "generate_research_queries",
+    "normalize_citation_url",
 
     "parse_market_research_output",
     "search",

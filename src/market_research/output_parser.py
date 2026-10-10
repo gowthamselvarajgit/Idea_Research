@@ -1,14 +1,16 @@
 """Defensive parser for AI-generated market research JSON outputs."""
 
 import json
-from typing import Final, Optional
+from typing import Final, Optional, Sequence
 
+from src.market_research.citation_grounding import correlate_findings_with_sources
 from src.market_research.contract import (
     ALLOWED_RELEVANCE,
     REQUIRED_MARKET_RESEARCH_FIELDS,
     validate_market_research_record,
 )
 from src.market_research.models import MarketResearchRecord
+from src.market_research.source_models import WebResearchSource
 
 REQUIRED_AI_FINDING_FIELDS: Final[frozenset[str]] = REQUIRED_MARKET_RESEARCH_FIELDS
 
@@ -26,6 +28,8 @@ class OpportunityIdMismatchError(MarketResearchOutputParseError):
 def parse_market_research_output(
     raw_output: str,
     expected_opportunity_id: Optional[str] = None,
+    *,
+    sources: Optional[Sequence[WebResearchSource]] = None,
 ) -> list[MarketResearchRecord]:
     """Parse and validate raw AI market research output text into a list of MarketResearchRecords.
 
@@ -174,5 +178,8 @@ def parse_market_research_output(
             ) from err
 
         results.append(record)
+
+    if sources is not None:
+        results = correlate_findings_with_sources(results, sources)
 
     return results

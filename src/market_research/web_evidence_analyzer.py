@@ -9,8 +9,10 @@ from collections.abc import Sequence
 import logging
 from typing import Any, Optional
 
+from src.market_research.citation_grounding import correlate_findings_with_sources
 from src.market_research.models import MarketResearchRecord
 from src.market_research.repository import MarketResearchRepository
+from src.market_research.search_client import callable_accepts_kwarg
 from src.market_research.service import (
     MarketResearchAIError,
     MarketResearchParseError,
@@ -198,17 +200,28 @@ class WebEvidenceAnalyzer:
 
         # 6. Call existing MarketResearchService
         try:
-            return self.service.conduct_market_research(
-                opportunity=target_opp,
-                problems=problems,
-                research_evidence=formatted_evidence,
-            )
+            if callable_accepts_kwarg(self.service.conduct_market_research, "sources"):
+                findings = self.service.conduct_market_research(
+                    opportunity=target_opp,
+                    problems=problems,
+                    research_evidence=formatted_evidence,
+                    sources=sources,
+                )
+            else:
+                findings = self.service.conduct_market_research(
+                    opportunity=target_opp,
+                    problems=problems,
+                    research_evidence=formatted_evidence,
+                )
         except MarketResearchServiceError:
             raise
         except Exception as exc:
             raise WebEvidenceAnalyzerError(
                 f"Market research analysis failed for opportunity '{clean_opp_id}': {exc}"
             ) from exc
+
+        # 7. Ground and correlate citation URLs against collected sources
+        return correlate_findings_with_sources(findings, sources)
 
     # Aliases for caller ergonomics
     analyze_sources = analyze

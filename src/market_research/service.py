@@ -4,6 +4,7 @@ from dataclasses import replace
 import logging
 from typing import Any, Optional, Sequence, Union
 
+from src.market_research.citation_grounding import correlate_findings_with_sources
 from src.market_research.models import MarketResearchRecord
 from src.market_research.output_parser import (
     MarketResearchOutputParseError,
@@ -14,6 +15,7 @@ from src.market_research.research_prompt import (
     MARKET_RESEARCH_SYSTEM_PROMPT,
     format_market_research_user_prompt,
 )
+from src.market_research.source_models import WebResearchSource
 from src.opportunities.models import OpportunityRecord
 from src.problems.models import ProblemRecord
 
@@ -90,6 +92,7 @@ class MarketResearchService:
         research_evidence: Optional[Union[str, Sequence[str], dict[str, Any]]] = None,
         *,
         evidence: Optional[Union[str, Sequence[str], dict[str, Any]]] = None,
+        sources: Optional[Sequence[WebResearchSource]] = None,
     ) -> list[MarketResearchRecord]:
         """Conduct AI-driven market research on a startup opportunity and persist findings.
 
@@ -172,6 +175,10 @@ class MarketResearchService:
             raise MarketResearchParseError(
                 f"Failed to parse market research output for opportunity '{opportunity.id}': {exc}"
             ) from exc
+
+        # 5b. Correlate citations with sources when provided
+        if sources is not None:
+            parsed_findings = correlate_findings_with_sources(parsed_findings, sources)
 
         # 6. Persist findings using MarketResearchRepository
         persisted_records: list[MarketResearchRecord] = []
