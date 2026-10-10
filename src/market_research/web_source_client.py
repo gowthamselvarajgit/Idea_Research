@@ -13,6 +13,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from src.market_research.google_news_url_resolver import (
+    GoogleNewsURLResolver,
+    is_google_news_url,
+)
 from src.market_research.source_contract import validate_web_research_source_record
 from src.market_research.source_models import ALLOWED_SOURCE_TYPES, WebResearchSource
 
@@ -154,6 +158,8 @@ class WebSourceClient:
         default_timeout: float = DEFAULT_TIMEOUT_SECONDS,
         user_agent: Optional[str] = None,
         allow_localhost: bool = False,
+        url_resolver: Optional[GoogleNewsURLResolver] = None,
+        resolve_google_news_urls: bool = True,
     ) -> None:
         """Initialize the client.
 
@@ -161,10 +167,17 @@ class WebSourceClient:
             default_timeout: Network timeout in seconds.
             user_agent: Custom User-Agent header string.
             allow_localhost: If True, allows local loopback addresses (for test setups).
+            url_resolver: Optional custom GoogleNewsURLResolver instance.
+            resolve_google_news_urls: If True, automatically resolves Google News article links to publisher URLs.
         """
         self.default_timeout = default_timeout
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.allow_localhost = allow_localhost
+        self.resolve_google_news_urls = resolve_google_news_urls
+        self.url_resolver = url_resolver or GoogleNewsURLResolver(
+            timeout=default_timeout,
+            user_agent=self.user_agent,
+        )
 
     def fetch_source(
         self,
@@ -177,12 +190,13 @@ class WebSourceClient:
         Workflow:
             1. Validate URL and security constraints.
             2. Validate requested source_type.
-            3. Perform HTTP GET using urllib.request.
-            4. Follow standard HTTP redirects and capture final URL.
-            5. Extract clean title and readable body text, removing scripts/styles.
-            6. Derive publisher/domain from final URL.
-            7. Package response metadata into raw_data.
-            8. Construct and validate immutable WebResearchSource.
+            3. If URL is a Google News RSS redirect, resolve to publisher destination URL.
+            4. Perform HTTP GET using urllib.request.
+            5. Follow standard HTTP redirects and capture final URL.
+            6. Extract clean title and readable body text, removing scripts/styles.
+            7. Derive publisher/domain from final URL.
+            8. Package response metadata into raw_data (preserving initial/resolved URLs).
+            9. Construct and validate immutable WebResearchSource.
 
         Args:
             url: Target HTTP/HTTPS URL.
@@ -196,9 +210,10 @@ class WebSourceClient:
             WebSourceInvalidURLError: For invalid URLs or prohibited schemes/hosts.
             WebSourceHTTPError: For HTTP 4xx or 5xx status codes.
             WebSourceNetworkError: For network connection or timeout errors.
-            WebSourceContentError: When page body is empty or unusable.
+            WebSourceContentError: When page body is empty, unusable, or unresolved.
         """
         parsed_url = validate_target_url(url, allow_localhost=self.allow_localhost)
+        clean_url = url.strip()
 
         clean_st = source_type.strip().lower()
         if clean_st not in ALLOWED_SOURCE_TYPES:
@@ -208,8 +223,30 @@ class WebSourceClient:
 
         req_timeout = timeout if timeout is not None else self.default_timeout
 
+        target_url = clean_url
+        resolved_url: Optional[str] = None
+
+        if self.resolve_google_news_urls and is_google_news_url(clean_url):
+            resolved_url = self.url_resolver.resolve_url(clean_url, timeout=req_timeout)
+            if resolved_url:
+                target_url = resolved_url
+                logger.info(
+                    "Resolved Google News URL '%s' to publisher destination '%s'",
+                    clean_url,
+                    target_url,
+                )
+                validate_target_url(target_url, allow_localhost=self.allow_localhost)
+            else:
+                logger.warning(
+                    "Could not resolve Google News article link '%s' to a readable publisher URL.",
+                    clean_url,
+                )
+                raise WebSourceContentError(
+                    f"Could not resolve Google News article link '{clean_url}' to a readable publisher URL."
+                )
+
         req = urllib.request.Request(
-            url=url.strip(),
+            url=target_url,
             headers={
                 "User-Agent": self.user_agent,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -233,11 +270,11 @@ class WebSourceClient:
 
         except urllib.error.HTTPError as exc:
             raise WebSourceHTTPError(
-                f"HTTP request failed with status {exc.code} for '{url}': {exc.reason}"
+                f"HTTP request failed with status {exc.code} for '{target_url}': {exc.reason}"
             ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WebSourceNetworkError(
-                f"Network error while retrieving '{url}': {exc}"
+                f"Network error while retrieving '{target_url}': {exc}"
             ) from exc
 
         # Parse HTML text and extract readable body and title
@@ -263,13 +300,16 @@ class WebSourceClient:
         retrieval_timestamp = datetime.now(timezone.utc).isoformat()
 
         raw_data = {
-            "initial_url": url.strip(),
+            "initial_url": clean_url,
             "final_url": final_url,
             "http_status": status_code,
             "content_type": content_type,
             "content_length": len(raw_bytes),
-            "redirected": (url.strip() != final_url),
+            "redirected": (clean_url != final_url),
         }
+        if resolved_url:
+            raw_data["resolved_url"] = resolved_url
+            raw_data["original_search_url"] = clean_url
 
         source = WebResearchSource(
             url=final_url,
@@ -291,6 +331,8 @@ def fetch_source(
     source_type: str = "other",
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     allow_localhost: bool = False,
+    url_resolver: Optional[GoogleNewsURLResolver] = None,
+    resolve_google_news_urls: bool = True,
 ) -> WebResearchSource:
     """Functional convenience wrapper for retrieving a web research source.
 
@@ -299,9 +341,16 @@ def fetch_source(
         source_type: Source category classification.
         timeout: Request timeout in seconds.
         allow_localhost: Whether to permit localhost targets.
+        url_resolver: Optional custom GoogleNewsURLResolver instance.
+        resolve_google_news_urls: Whether to resolve Google News RSS URLs.
 
     Returns:
         WebResearchSource: Validated immutable source record.
     """
-    client = WebSourceClient(default_timeout=timeout, allow_localhost=allow_localhost)
+    client = WebSourceClient(
+        default_timeout=timeout,
+        allow_localhost=allow_localhost,
+        url_resolver=url_resolver,
+        resolve_google_news_urls=resolve_google_news_urls,
+    )
     return client.fetch_source(url=url, source_type=source_type)

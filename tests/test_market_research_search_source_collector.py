@@ -28,6 +28,10 @@ from src.market_research.source_collection import (
 )
 from src.market_research.source_contract import validate_web_research_source_record
 from src.market_research.source_models import WebResearchSource
+from src.market_research.web_evidence_analyzer import (
+    extract_publication_date,
+    format_web_source_evidence,
+)
 from src.market_research.web_source_client import WebSourceClient
 
 
@@ -59,7 +63,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title=title,
             source_type="competitor",
             publisher_or_domain=domain,
-            retrieved_content="Full page article on clinical skincare trial results.",
+            retrieved_content="Full page article on clinical skincare trial results with detailed efficacy benchmarks and comparative analysis.",
             retrieved_at="2026-10-08T12:00:00Z",
         )
 
@@ -316,7 +320,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="AI Skin Diagnostics",
             source_type="competitor",
             publisher_or_domain="example.com",
-            retrieved_content="Detailed dermatology study on automated skin classification.",
+            retrieved_content="Detailed dermatology study on automated skin classification with deep learning convolutional neural network models.",
             retrieved_at="2026-10-08T12:00:00Z",
         )
 
@@ -423,7 +427,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="AI Skin Diagnostics",
             source_type="industry",
             publisher_or_domain="innovate.example.com",
-            retrieved_content="Clinical review text.",
+            retrieved_content="Clinical review text analyzing efficacy metrics across multi-center dermatological study validation.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data=crawler_meta,
         )
@@ -481,7 +485,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Title",
             source_type="industry",
             publisher_or_domain="crawler.example.com",
-            retrieved_content="Content text.",
+            retrieved_content="Content text analyzing enterprise technology adoption trends across global commercial infrastructure markets.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data=crawler_meta,
         )
@@ -542,7 +546,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Title 1",
             source_type="news",
             publisher_or_domain="site1.com",
-            retrieved_content="Content 1",
+            retrieved_content="Content 1 with substantial article text covering comprehensive market research findings, competitive dynamics, and enterprise commercial analysis.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data={"initial_url": "https://site1.com/a", "http_status": 200},
         )
@@ -551,7 +555,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Title 2",
             source_type="news",
             publisher_or_domain="site2.com",
-            retrieved_content="Content 2",
+            retrieved_content="Content 2 with substantial article text covering comprehensive market research findings, competitive dynamics, and enterprise commercial analysis.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data={"initial_url": "https://site2.com/b", "http_status": 200},
         )
@@ -560,7 +564,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Title 3",
             source_type="news",
             publisher_or_domain="site3.com",
-            retrieved_content="Content 3",
+            retrieved_content="Content 3 with substantial article text covering comprehensive market research findings, competitive dynamics, and enterprise commercial analysis.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data={"initial_url": "https://site3.com/c", "http_status": 200},
         )
@@ -609,7 +613,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Matched",
             source_type="news",
             publisher_or_domain="matched.com",
-            retrieved_content="Matched content",
+            retrieved_content="Matched content with sufficient article length covering market research findings and enterprise analysis.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data={"initial_url": "https://matched.com/page", "http_status": 200},
         )
@@ -618,7 +622,7 @@ class TestSearchSourceCollector(unittest.TestCase):
             title="Unmatched",
             source_type="news",
             publisher_or_domain="unmatched.com",
-            retrieved_content="Unmatched content",
+            retrieved_content="Unmatched content with sufficient article length covering market research findings and enterprise analysis.",
             retrieved_at="2026-10-09T12:00:00Z",
             raw_data={"initial_url": "https://unmatched.com/unrelated", "http_status": 200},
         )
@@ -646,6 +650,120 @@ class TestSearchSourceCollector(unittest.TestCase):
         self.assertNotIn("search_engine", res_unmatched.raw_data)
         self.assertEqual(res_unmatched.raw_data["http_status"], 200)
         self.assertEqual(res_unmatched.raw_data["initial_url"], "https://unmatched.com/unrelated")
+
+    def test_rss_publication_date_metadata_survives_source_collection(self) -> None:
+        """RSS publication date metadata from search result survives collection into source and evidence."""
+        mock_provider = MagicMock(spec=SearchProvider)
+        mock_collector = MagicMock(spec=WebSourceCollector)
+
+        rss_pub_date = "Fri, 09 Oct 2026 14:30:00 GMT"
+        sr = SearchResult(
+            url="https://news.example.com/story-1",
+            title="Biotech Breakthrough",
+            snippet="New findings published.",
+            domain="news.example.com",
+            raw_data={
+                "engine": "google_news_rss",
+                "pub_date": rss_pub_date,
+            },
+        )
+        mock_provider.search.return_value = [sr]
+
+        ws = WebResearchSource(
+            url="https://news.example.com/story-1",
+            title="Biotech Breakthrough",
+            source_type="news",
+            publisher_or_domain="news.example.com",
+            retrieved_content="Full article body with detailed biotechnology innovation, clinical trial validation, and therapeutic research market analysis.",
+            retrieved_at="2026-10-10T10:00:00Z",
+            raw_data={"initial_url": "https://news.example.com/story-1"},
+        )
+        mock_collector.collect_sources.return_value = SourceCollectionResult(
+            sources=(ws,),
+            failures=(),
+        )
+
+        service = SearchSourceCollector(
+            search_provider=mock_provider,
+            source_collector=mock_collector,
+        )
+        result = service.collect_for_query("biotech news", max_results=1)
+
+        self.assertEqual(len(result.sources), 1)
+        source = result.sources[0]
+
+        # Verify publication date survived into source raw_data
+        self.assertEqual(source.raw_data.get("pub_date"), rss_pub_date)
+        self.assertEqual(source.raw_data.get("publication_date"), rss_pub_date)
+        self.assertEqual(extract_publication_date(source), rss_pub_date)
+
+        # Verify evidence formatting reflects publication date alongside distinct retrieval date
+        evidence_text = format_web_source_evidence(source)
+        self.assertIn(f"Publication Date: {rss_pub_date}", evidence_text)
+        self.assertIn("Retrieved At: 2026-10-10T10:00:00Z", evidence_text)
+        self.assertNotIn(f"Publication Date: 2026-10-10T10:00:00Z", evidence_text)
+
+    def test_search_source_collector_filters_low_quality_and_records_failures(self) -> None:
+        """SearchSourceCollector filters low-quality sources out of sources and captures failure diagnostics."""
+        mock_provider = MagicMock(spec=SearchProvider)
+        mock_collector = MagicMock(spec=WebSourceCollector)
+
+        sr1 = SearchResult(url="https://valid.com/news", title="Valid News", snippet="Valid snippet", domain="valid.com")
+        sr2 = SearchResult(url="https://blocked.com/bot", title="Blocked Bot", snippet="Blocked snippet", domain="blocked.com")
+        sr3 = SearchResult(url="https://error.com/404", title="Error Page", snippet="Error snippet", domain="error.com")
+        mock_provider.search.return_value = [sr1, sr2, sr3]
+
+        ws_valid = WebResearchSource(
+            url="https://valid.com/news",
+            title="Valid News Article",
+            source_type="news",
+            publisher_or_domain="valid.com",
+            retrieved_content="Comprehensive clinical analysis of water purification nanoparticles with 99.8% contaminant removal efficacy.",
+            retrieved_at="2026-10-10T10:00:00Z",
+            raw_data={"initial_url": "https://valid.com/news", "http_status": 200, "pub_date": "2026-10-09"},
+        )
+        ws_bot = WebResearchSource(
+            url="https://blocked.com/bot",
+            title="Just a moment... | Security Check",
+            source_type="news",
+            publisher_or_domain="blocked.com",
+            retrieved_content="Please verify you are human to continue. Unusual traffic detected from your computer network.",
+            retrieved_at="2026-10-10T10:00:00Z",
+            raw_data={"initial_url": "https://blocked.com/bot", "http_status": 200},
+        )
+        ws_err = WebResearchSource(
+            url="https://error.com/404",
+            title="404 Not Found",
+            source_type="news",
+            publisher_or_domain="error.com",
+            retrieved_content="The requested URL was not found on this server. Page does not exist.",
+            retrieved_at="2026-10-10T10:00:00Z",
+            raw_data={"initial_url": "https://error.com/404", "http_status": 404},
+        )
+        mock_collector.collect_sources.return_value = SourceCollectionResult(
+            sources=(ws_valid, ws_bot, ws_err),
+            failures=(),
+        )
+
+        service = SearchSourceCollector(
+            search_provider=mock_provider,
+            source_collector=mock_collector,
+        )
+        result = service.collect_for_query("water filter", max_results=3)
+
+        # Only valid source survives in sources
+        self.assertEqual(len(result.sources), 1)
+        self.assertEqual(result.sources[0].url, "https://valid.com/news")
+        self.assertEqual(result.sources[0].raw_data["pub_date"], "2026-10-09")
+
+        # Rejected sources are recorded in failures
+        self.assertEqual(len(result.failures), 2)
+        failed_urls = [f.url for f in result.failures]
+        self.assertIn("https://blocked.com/bot", failed_urls)
+        self.assertIn("https://error.com/404", failed_urls)
+        for f in result.failures:
+            self.assertEqual(f.error_type, "LowQualityContent")
+            self.assertTrue(len(f.error_message) > 0)
 
 
 if __name__ == "__main__":

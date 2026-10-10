@@ -27,6 +27,11 @@ from src.market_research.source_collection import (
     WebSourceCollector,
 )
 from src.market_research.source_models import WebResearchSource
+from src.market_research.web_evidence_analyzer import (
+    DEFAULT_MIN_CONTENT_LENGTH,
+    SourceQualityDecision,
+    evaluate_source_quality,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +150,12 @@ def _enrich_source_with_search_metadata(
     if relevance_reason is not None:
         discovery_fields["relevance_reason"] = relevance_reason
         discovery_fields["search_relevance_reason"] = relevance_reason
+
+    if isinstance(search_result.raw_data, dict):
+        pub_date = search_result.raw_data.get("pub_date") or search_result.raw_data.get("publication_date")
+        if pub_date is not None:
+            discovery_fields["pub_date"] = pub_date
+            discovery_fields["publication_date"] = pub_date
 
     merged_raw.update(discovery_fields)
 
@@ -331,7 +342,13 @@ class SearchSourceCollector:
                 init_u = source.raw_data.get("initial_url")
                 if isinstance(init_u, str) and init_u.strip():
                     candidate_urls.append(init_u.strip())
-            if isinstance(source.url, str) and source.url.strip():
+                orig_u = source.raw_data.get("original_search_url")
+                if isinstance(orig_u, str) and orig_u.strip() and orig_u.strip() not in candidate_urls:
+                    candidate_urls.append(orig_u.strip())
+                res_u = source.raw_data.get("resolved_url")
+                if isinstance(res_u, str) and res_u.strip() and res_u.strip() not in candidate_urls:
+                    candidate_urls.append(res_u.strip())
+            if isinstance(source.url, str) and source.url.strip() and source.url.strip() not in candidate_urls:
                 candidate_urls.append(source.url.strip())
             if isinstance(source.raw_data, dict):
                 fin_u = source.raw_data.get("final_url")
@@ -359,11 +376,33 @@ class SearchSourceCollector:
             else:
                 enriched_sources.append(source)
 
+        # 5. Filter low-quality sources and record rejection diagnostics
+        quality_sources: list[WebResearchSource] = []
+        all_failures: list[SourceCollectionFailure] = list(collection_result.failures)
+
+        for source in enriched_sources:
+            decision = evaluate_source_quality(source)
+            if decision.is_accepted:
+                quality_sources.append(source)
+            else:
+                logger.info(
+                    "Rejected low-quality source '%s': %s",
+                    source.url,
+                    decision.reason,
+                )
+                all_failures.append(
+                    SourceCollectionFailure(
+                        url=source.url,
+                        error_type="LowQualityContent",
+                        error_message=decision.reason,
+                    )
+                )
+
         return SearchSourceCollectionResult(
             query=clean_query,
             search_results=tuple(search_results),
-            sources=tuple(enriched_sources),
-            failures=collection_result.failures,
+            sources=tuple(quality_sources),
+            failures=tuple(all_failures),
         )
 
     # Convenience aliases

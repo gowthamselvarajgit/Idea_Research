@@ -20,7 +20,11 @@ from src.evaluation.evaluation_service import OpportunityEvaluationService
 from src.evaluation.models import OpportunityEvaluationRecord
 from src.market_research.models import MarketResearchRecord
 from src.market_research.research_query_generator import ResearchQueryGenerator
-from src.market_research.search_client import callable_accepts_kwarg
+from src.market_research.search_client import (
+    SearchClient,
+    SearchProvider,
+    callable_accepts_kwarg,
+)
 from src.market_research.search_source_collector import SearchSourceCollector
 from src.market_research.source_collection import SourceCollectionFailure
 from src.market_research.source_models import WebResearchSource
@@ -150,6 +154,8 @@ class ResearchOrchestrator:
         search_collector: Optional[SearchSourceCollector] = None,
         web_evidence_analyzer: Optional[WebEvidenceAnalyzer] = None,
         *,
+        search_provider: Optional[SearchProvider] = None,
+        search_client: Optional[SearchClient] = None,
         db_path: Optional[Path | str] = None,
     ) -> None:
         """Initialize ResearchOrchestrator with explicit dependency injection.
@@ -162,6 +168,8 @@ class ResearchOrchestrator:
             query_generator: Generator for web search queries.
             search_collector: Collector coordinating web searching and page retrieval.
             web_evidence_analyzer: Analyzer connecting web sources to market research AI service.
+            search_provider: Optional custom SearchProvider (e.g. FallbackSearchProvider).
+            search_client: Optional custom SearchClient.
             db_path: Optional SQLite database path used for default components.
         """
         self.db_path = Path(db_path) if db_path else DATABASE_PATH
@@ -170,7 +178,15 @@ class ResearchOrchestrator:
         self.opportunity_synthesis_service = opportunity_synthesis_service
         self.opportunity_evaluation_service = opportunity_evaluation_service
         self.query_generator = query_generator or ResearchQueryGenerator()
-        self.search_collector = search_collector or SearchSourceCollector()
+        if search_collector is not None:
+            self.search_collector = search_collector
+        elif search_client is not None or search_provider is not None:
+            self.search_collector = SearchSourceCollector(
+                search_client=search_client,
+                search_provider=search_provider,
+            )
+        else:
+            self.search_collector = SearchSourceCollector()
         self.web_evidence_analyzer = web_evidence_analyzer
 
     def run_research(

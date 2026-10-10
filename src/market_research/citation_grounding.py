@@ -11,6 +11,7 @@ import logging
 from typing import Any, Optional, Union
 import urllib.parse
 
+from src.market_research.evidence_status import classify_finding_evidence_status
 from src.market_research.models import MarketResearchRecord
 from src.market_research.source_models import WebResearchSource
 
@@ -139,7 +140,7 @@ def build_source_url_lookup(
 
         # 2. Legitimate crawler metadata URLs belonging to this specific source
         if isinstance(s.raw_data, dict):
-            for k in ("initial_url", "final_url", "search_url", "original_search_url"):
+            for k in ("initial_url", "final_url", "search_url", "original_search_url", "resolved_url", "publisher_url"):
                 val = s.raw_data.get(k)
                 if isinstance(val, str) and val.strip():
                     norm_k = normalize_citation_url(val)
@@ -238,6 +239,13 @@ def correlate_finding_with_sources(
 
             if "http_status" in src_raw and src_raw["http_status"] is not None:
                 new_raw["http_status"] = src_raw["http_status"]
+
+            if "pub_date" in src_raw and src_raw["pub_date"]:
+                new_raw["pub_date"] = src_raw["pub_date"]
+                new_raw["publication_date"] = src_raw["pub_date"]
+            elif "publication_date" in src_raw and src_raw["publication_date"]:
+                new_raw["pub_date"] = src_raw["publication_date"]
+                new_raw["publication_date"] = src_raw["publication_date"]
         elif matched_source.publisher_or_domain:
             new_raw["search_publisher"] = matched_source.publisher_or_domain
     else:
@@ -245,6 +253,15 @@ def correlate_finding_with_sources(
         new_raw["unmatched_citation"] = True
         if is_ambiguous:
             new_raw["ambiguous_citation"] = True
+
+    # Classify evidence status conservatively based on actual source content
+    status, supporting_passage = classify_finding_evidence_status(
+        finding=finding,
+        source=matched_source if (matched_source is not None and not is_ambiguous) else None,
+    )
+    new_raw["evidence_status"] = status
+    if supporting_passage:
+        new_raw["supporting_passage"] = supporting_passage
 
     return replace(finding, raw_data=new_raw)
 

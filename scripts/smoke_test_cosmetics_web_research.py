@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
+from src.market_research.fallback_search_provider import create_default_search_provider
 from src.market_research.research_query_generator import ResearchQueryGenerator
 from src.market_research.search_source_collector import SearchSourceCollector
 from src.patents.research_config import COSMETICS_RESEARCH_CONFIG
@@ -30,8 +30,8 @@ def run_cosmetics_web_research_smoke_test() -> None:
     for i, q in enumerate(target_queries, start=1):
         print(f"  {i}. {q}")
 
-    # 3. Setup provider and collector
-    provider = DuckDuckGoHTMLSearchProvider()
+    # 3. Setup resilient default provider and collector
+    provider = create_default_search_provider()
     collector = SearchSourceCollector(search_provider=provider)
 
     total_queries_executed = 0

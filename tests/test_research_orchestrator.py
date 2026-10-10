@@ -137,7 +137,7 @@ class TestResearchOrchestrator(unittest.TestCase):
             title="State of Desalination Membranes 2026",
             source_type="industry",
             publisher_or_domain="watertech.example.com",
-            retrieved_content="Industrial market review of reverse osmosis membranes.",
+            retrieved_content="Industrial market review of reverse osmosis membranes with detailed technical benchmarking across commercial desalination facilities.",
             retrieved_at="2026-10-08T12:00:00Z",
             id="src-101",
         )
@@ -859,7 +859,7 @@ class TestProductionQueryAnchoringAndDomainVocabulary(unittest.TestCase):
             title="AquaMembrane Specifications",
             source_type="competitor",
             publisher_or_domain="aquamembrane.example.com",
-            retrieved_content="Clean water membrane specs.",
+            retrieved_content="Clean water membrane specs with detailed technical benchmarking and operational permeability metrics across commercial desalination facilities.",
             retrieved_at="2026-10-10T10:00:00Z",
             raw_data={
                 "initial_url": "https://aquamembrane.example.com/spec",

@@ -29,7 +29,7 @@ class TestCitationGrounding(unittest.TestCase):
         relevance_reason: str = "Matched configured subject term: 'membrane biofouling'",
         http_status: int = 200,
         initial_url: str = "https://aquamembrane.example.com/spec",
-        content: str = "Technical specifications for reverse osmosis filtration units.",
+        content: str = "Technical specifications for reverse osmosis filtration units with detailed membrane permeability and contaminant rejection metrics.",
         source_id: str = None,
     ) -> WebResearchSource:
         """Helper to create a WebResearchSource populated with discovery metadata."""

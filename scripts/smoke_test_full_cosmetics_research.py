@@ -39,7 +39,7 @@ from src.common.database import init_db
 from src.common.research_runs import ResearchRunService
 from src.evaluation.evaluation_service import OpportunityEvaluationService
 from src.evaluation.repository import OpportunityEvaluationRepository
-from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
+from src.market_research.fallback_search_provider import create_default_search_provider
 from src.market_research.repository import MarketResearchRepository
 from src.market_research.research_query_generator import ResearchQueryGenerator
 from src.market_research.search_source_collector import SearchSourceCollector
@@ -117,9 +117,9 @@ class TrackingSearchSourceCollector(SearchSourceCollector):
         super().__init__(*args, **kwargs)
         self.query_telemetry: list[dict[str, Any]] = []
 
-    def collect_for_query(self, query: str, max_results: int = 5):
+    def collect_for_query(self, query: str, max_results: int = 5, *args: Any, **kwargs: Any) -> Any:
         time.sleep(1.0)
-        res = super().collect_for_query(query=query, max_results=max_results)
+        res = super().collect_for_query(query=query, max_results=max_results, *args, **kwargs)
         self.query_telemetry.append({
             "query": query,
             "search_results_count": len(res.search_results),
@@ -202,10 +202,10 @@ def run_full_cosmetics_research_smoke_test() -> ResearchOrchestrationResult:
     print("[Stage 5 Setup] Initializing ResearchQueryGenerator...", flush=True)
     query_generator = ResearchQueryGenerator()
 
-    # 9. Instantiate Stage 6: DuckDuckGo Search Source Collector with telemetry tracking
-    print("[Stage 6 Setup] Initializing DuckDuckGoHTMLSearchProvider & TrackingSearchSourceCollector...", flush=True)
-    ddg_provider = DuckDuckGoHTMLSearchProvider()
-    search_collector = TrackingSearchSourceCollector(search_provider=ddg_provider)
+    # 9. Instantiate Stage 6: Resilient Fallback Search Source Collector with telemetry tracking
+    print("[Stage 6 Setup] Initializing Fallback Search Provider (DDG + Google News RSS) & TrackingSearchSourceCollector...", flush=True)
+    search_provider = create_default_search_provider()
+    search_collector = TrackingSearchSourceCollector(search_provider=search_provider)
 
     # 10. Instantiate Stage 7: Market Research AI Service & Web Evidence Analyzer
     print("[Stage 7 Setup] Initializing MarketResearchService & WebEvidenceAnalyzer...", flush=True)

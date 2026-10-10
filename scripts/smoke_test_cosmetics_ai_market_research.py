@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.market_research.duckduckgo_provider import DuckDuckGoHTMLSearchProvider
+from src.market_research.fallback_search_provider import create_default_search_provider
 from src.market_research.models import MarketResearchRecord
 from src.market_research.research_query_generator import ResearchQueryGenerator
 from src.market_research.search_source_collector import SearchSourceCollector
@@ -49,8 +49,8 @@ def run_controlled_ai_market_research_smoke_test() -> None:
     for idx, q in enumerate(target_queries, 1):
         print(f"  {idx}. '{q}'")
 
-    # 3. Setup DDG provider and search collector
-    provider = DuckDuckGoHTMLSearchProvider()
+    # 3. Setup resilient search provider and search collector
+    provider = create_default_search_provider()
     collector = SearchSourceCollector(search_provider=provider)
 
     combined_sources: list[WebResearchSource] = []

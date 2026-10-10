@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+from src.market_research.google_news_url_resolver import extract_publisher_url_from_rss_item
 from src.market_research.search_client import (
     DEFAULT_MAX_RESULTS,
     MAX_ALLOWED_RESULTS,
@@ -553,6 +554,7 @@ class GoogleNewsRSSSearchProvider:
             source_elem = item.find("source")
             publisher_name = source_elem.text.strip() if source_elem is not None and source_elem.text else ""
             source_url = source_elem.get("url", "").strip() if source_elem is not None else ""
+            publisher_url = extract_publisher_url_from_rss_item(item) or source_url
 
             # Validate destination link
             if not raw_link or not isinstance(raw_link, str):
@@ -617,6 +619,7 @@ class GoogleNewsRSSSearchProvider:
                 "engine": "google_news_rss",
                 "publisher": publisher_name,
                 "source_url": source_url,
+                "publisher_url": publisher_url,
                 "pub_date": pub_date,
                 "query": query,
                 "relevance_reason": decision.reason,
