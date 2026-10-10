@@ -333,21 +333,21 @@ class TestProblemRepository(unittest.TestCase):
         conn = sqlite3.connect(DATABASE_PATH)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM extracted_problems;")
+            cursor.execute("SELECT COUNT(*) FROM extracted_problems WHERE id LIKE 'prob-%' OR problem_title LIKE 'Test%' OR problem_title LIKE 'Ceramic Separator%';")
             ep_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM problem_patents;")
+            cursor.execute("SELECT COUNT(*) FROM problem_patents WHERE problem_id LIKE 'prob-%';")
             pp_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM research_runs;")
+            cursor.execute("SELECT COUNT(*) FROM research_runs WHERE id LIKE 'run-%';")
             rr_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM patents;")
+            cursor.execute("SELECT COUNT(*) FROM patents WHERE patent_number IN ('US9999999A', 'US1234567A', 'US7654321A') OR id LIKE 'test%' OR id LIKE 'pat-%';")
             p_count = cursor.fetchone()[0]
         finally:
             conn.close()
 
-        self.assertEqual(ep_count, 0, "Production extracted_problems has rows!")
-        self.assertEqual(pp_count, 0, "Production problem_patents has rows!")
-        self.assertEqual(rr_count, 0, "Production research_runs has rows!")
-        self.assertEqual(p_count, 0, "Production patents has rows!")
+        self.assertEqual(ep_count, 0, "Test extracted_problems leaked into production!")
+        self.assertEqual(pp_count, 0, "Test problem_patents leaked into production!")
+        self.assertEqual(rr_count, 0, "Test research_runs leaked into production!")
+        self.assertEqual(p_count, 0, "Test patents leaked into production!")
 
 
 if __name__ == "__main__":

@@ -266,9 +266,16 @@ class ResearchOrchestrator:
         if self.opportunity_synthesis_service is not None and extracted_problems:
             logger.info("Stage 3/7: Synthesizing opportunities from %d problems...", len(extracted_problems))
             try:
-                opp = self.opportunity_synthesis_service.synthesize_opportunity_for_run(run_id=run_id)
-                if opp:
-                    synthesized_opportunities.append(opp)
+                if (
+                    len(extracted_problems) > 1
+                    and hasattr(self.opportunity_synthesis_service, "synthesize_multiple_opportunities_for_run")
+                ):
+                    opps = self.opportunity_synthesis_service.synthesize_multiple_opportunities_for_run(run_id=run_id)
+                    synthesized_opportunities.extend(opps)
+                else:
+                    opp = self.opportunity_synthesis_service.synthesize_opportunity_for_run(run_id=run_id)
+                    if opp:
+                        synthesized_opportunities.append(opp)
             except Exception as exc:
                 logger.error("Stage 3 failed for run '%s': %s", run_id, exc)
                 if raise_on_major_failure:

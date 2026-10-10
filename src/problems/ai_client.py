@@ -154,6 +154,10 @@ class AntigravityAIClient:
                     check=False,
                 )
             except FileNotFoundError as err:
+                if getattr(err, "winerror", None) == 206:
+                    raise AIClientError(
+                        f"Prompt command length ({len(combined_prompt)} chars) exceeded Windows limit (WinError 206)."
+                    ) from err
                 # Missing executable is non-retryable
                 raise AIClientExecutableError(
                     f"AI CLI executable '{self.executable}' not found on system PATH."

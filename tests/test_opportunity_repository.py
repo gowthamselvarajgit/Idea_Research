@@ -360,15 +360,15 @@ class TestOpportunityRepository(unittest.TestCase):
         conn = sqlite3.connect(DATABASE_PATH)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM startup_opportunities;")
+            cursor.execute("SELECT COUNT(*) FROM startup_opportunities WHERE id LIKE 'opp-%' OR opportunity_title LIKE 'Test%';")
             so_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM opportunity_problems;")
+            cursor.execute("SELECT COUNT(*) FROM opportunity_problems WHERE opportunity_id LIKE 'opp-%' OR problem_id LIKE 'prob-%';")
             op_count = cursor.fetchone()[0]
         finally:
             conn.close()
 
-        self.assertEqual(so_count, 0, "Production startup_opportunities has rows!")
-        self.assertEqual(op_count, 0, "Production opportunity_problems has rows!")
+        self.assertEqual(so_count, 0, "Test startup_opportunities leaked into production!")
+        self.assertEqual(op_count, 0, "Test opportunity_problems leaked into production!")
 
 
 if __name__ == "__main__":

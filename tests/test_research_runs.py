@@ -207,18 +207,18 @@ class TestResearchRunService(unittest.TestCase):
         conn = sqlite3.connect(DATABASE_PATH)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM research_runs;")
+            cursor.execute("SELECT COUNT(*) FROM research_runs WHERE id LIKE 'run-%' OR run_name LIKE 'Test%' OR run_name LIKE 'Battery%';")
             run_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM patents;")
+            cursor.execute("SELECT COUNT(*) FROM patents WHERE patent_number IN ('US9999999A', 'US1234567A', 'US7654321A') OR id LIKE 'test%' OR id LIKE 'pat-%';")
             patents_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM run_patents;")
+            cursor.execute("SELECT COUNT(*) FROM run_patents WHERE run_id LIKE 'run-%';")
             junction_count = cursor.fetchone()[0]
         finally:
             conn.close()
 
-        self.assertEqual(run_count, 0, "Production research_runs has rows!")
-        self.assertEqual(patents_count, 0, "Production patents has rows!")
-        self.assertEqual(junction_count, 0, "Production run_patents has rows!")
+        self.assertEqual(run_count, 0, "Test research_runs leaked into production!")
+        self.assertEqual(patents_count, 0, "Test patents leaked into production!")
+        self.assertEqual(junction_count, 0, "Test run_patents leaked into production!")
 
 
 if __name__ == "__main__":

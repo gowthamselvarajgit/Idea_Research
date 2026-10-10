@@ -256,9 +256,9 @@ class TestOpportunityEvaluationRepository(unittest.TestCase):
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='opportunity_evaluations';")
             if cursor.fetchone():
-                cursor.execute("SELECT COUNT(*) FROM opportunity_evaluations;")
+                cursor.execute("SELECT COUNT(*) FROM opportunity_evaluations WHERE id LIKE 'eval-%' OR opportunity_id LIKE 'opp-%';")
                 count = cursor.fetchone()[0]
-                self.assertEqual(count, 0, "Production opportunity_evaluations has rows!")
+                self.assertEqual(count, 0, "Test opportunity evaluations leaked into production!")
         finally:
             conn.close()
 

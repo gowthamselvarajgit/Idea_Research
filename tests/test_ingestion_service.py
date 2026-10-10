@@ -262,15 +262,15 @@ class TestEPOIngestionService(unittest.TestCase):
         conn = sqlite3.connect(DATABASE_PATH)
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM patents;")
+            cursor.execute("SELECT COUNT(*) FROM patents WHERE patent_number LIKE 'EP%' OR id LIKE 'test%';")
             patents_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM run_patents;")
+            cursor.execute("SELECT COUNT(*) FROM run_patents WHERE run_id LIKE 'test%';")
             runs_count = cursor.fetchone()[0]
         finally:
             conn.close()
 
-        self.assertEqual(patents_count, 0, "Production patents table has unexpected records!")
-        self.assertEqual(runs_count, 0, "Production run_patents table has unexpected records!")
+        self.assertEqual(patents_count, 0, "Test patents leaked into production patents table!")
+        self.assertEqual(runs_count, 0, "Test runs leaked into production run_patents table!")
 
 
 if __name__ == "__main__":

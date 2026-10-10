@@ -169,6 +169,62 @@ class OpportunitySynthesisService:
             return replace(opportunity_record, id=saved_id)
         return opportunity_record
 
+    def synthesize_multiple_opportunities_for_run(
+        self,
+        run_id: str,
+        max_opportunities: int = 3,
+    ) -> list[OpportunityRecord]:
+        """Synthesize distinct startup opportunities for the problem leads in a research run.
+
+        Args:
+            run_id: Identifier of the research run.
+            max_opportunities: Maximum number of distinct opportunities to synthesize.
+
+        Returns:
+            list[OpportunityRecord]: List of validated, persisted OpportunityRecord instances.
+        """
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise OpportunitySynthesisServiceError("run_id must be a non-empty string.")
+
+        clean_run_id = run_id.strip()
+        problems = self.problem_repository.get_problems_for_run(clean_run_id)
+        if not problems:
+            raise NoProblemsInRunError(
+                f"No problem records found for research run '{clean_run_id}'. Cannot synthesize opportunity."
+            )
+
+        if len(problems) == 1:
+            return [self.synthesize_opportunity_for_run(clean_run_id)]
+
+        opportunities: list[OpportunityRecord] = []
+        for prob in problems[:max_opportunities]:
+            try:
+                user_prompt = format_opportunity_synthesis_user_prompt(prob)
+                raw_response = self.ai_client.generate(
+                    system_prompt=OPPORTUNITY_SYNTHESIS_SYSTEM_PROMPT,
+                    user_prompt=user_prompt,
+                )
+                opp_record = parse_opportunity_synthesis_output(raw_response)
+                saved_id = self.opportunity_repository.save_opportunity(
+                    opportunity=opp_record,
+                    run_id=clean_run_id,
+                )
+                if saved_id:
+                    opp_record = replace(opp_record, id=saved_id)
+                opportunities.append(opp_record)
+            except Exception as exc:
+                logger.warning(
+                    "Failed synthesizing opportunity for problem %s in run %s: %s",
+                    prob.id,
+                    clean_run_id,
+                    exc,
+                )
+
+        if not opportunities:
+            return [self.synthesize_opportunity_for_run(clean_run_id)]
+
+        return opportunities
+
     # Aliases for interface compatibility
     synthesize_for_run = synthesize_opportunity_for_run
     synthesize_opportunity = synthesize_opportunity_for_run

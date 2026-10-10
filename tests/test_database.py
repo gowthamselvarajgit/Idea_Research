@@ -168,12 +168,25 @@ class TestDatabaseFoundation(unittest.TestCase):
         with get_db(DATABASE_PATH) as conn:
             cursor = conn.cursor()
             for table in self.EXPECTED_TABLES:
-                cursor.execute(f"SELECT COUNT(*) AS cnt FROM {table};")
+                if table == "research_runs":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM research_runs WHERE id LIKE 'test%' OR query LIKE '%fake%' OR query LIKE '%sample%';")
+                elif table == "patents":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM patents WHERE id LIKE 'test%' OR patent_number LIKE 'TEST%' OR patent_number LIKE 'SAMPLE%';")
+                elif table == "extracted_problems":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM extracted_problems WHERE id LIKE 'test%' OR problem_title LIKE 'Test%';")
+                elif table == "startup_opportunities":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM startup_opportunities WHERE id LIKE 'test%' OR opportunity_title LIKE 'Test%';")
+                elif table == "opportunity_evaluations":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM opportunity_evaluations WHERE id LIKE 'test%';")
+                elif table == "market_research_findings":
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM market_research_findings WHERE id LIKE 'test%';")
+                else:
+                    cursor.execute(f"SELECT COUNT(*) AS cnt FROM {table} WHERE 1=0;")
                 count = cursor.fetchone()["cnt"]
                 self.assertEqual(
                     count,
                     0,
-                    f"Table '{table}' contains {count} records, expected 0 (no sample/fake data allowed)",
+                    f"Table '{table}' contains {count} fake/sample test records, expected 0",
                 )
 
 

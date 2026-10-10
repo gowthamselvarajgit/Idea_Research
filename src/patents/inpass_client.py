@@ -674,6 +674,18 @@ class InPassClient(BasePatentClient):
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_el)
                 time.sleep(0.3)
                 try:
+                    driver.execute_script("""
+                        var el = arguments[0];
+                        var form = el.closest('form');
+                        if (form) {
+                            form.setAttribute('target', '_blank');
+                        } else if (el.tagName === 'A') {
+                            el.setAttribute('target', '_blank');
+                        }
+                    """, target_el)
+                except Exception:
+                    pass
+                try:
                     target_el.click()
                 except Exception:
                     driver.execute_script("arguments[0].click();", target_el)
@@ -683,7 +695,7 @@ class InPassClient(BasePatentClient):
                     var form = document.createElement('form');
                     form.method = 'POST';
                     form.action = '/PublicSearch/PublicationSearch/PatentDetails';
-                    form.target = '_self';
+                    form.target = '_blank';
                     var f1 = document.createElement('input'); f1.name = 'ApplicationNumber'; f1.value = '{clean_app}'; form.appendChild(f1);
                     var f2 = document.createElement('input'); f2.name = 'ConnectionName'; f2.value = 'PublicationConnection'; form.appendChild(f2);
                     var f3 = document.createElement('input'); f3.name = 'IP'; f3.value = '163.53.207.117'; form.appendChild(f3);

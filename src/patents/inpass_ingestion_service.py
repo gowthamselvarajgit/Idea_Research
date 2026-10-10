@@ -227,13 +227,22 @@ class InPassIngestionService:
 
         # 3. Retrieve PatentDetails for selected applications
         parsed_records: list[InPassPatentRecord] = []
-        try:
-            for app_num in target_app_nums:
+        for app_num in target_app_nums:
+            try:
                 record = active_client.get_patent_details(app_num, return_to_search=True)
                 parsed_records.append(record)
-        except InPassClientError as err:
-            logger.error("Failed retrieving PatentDetails during ingestion for run '%s': %s", run_id, err)
-            raise InPassIngestionSearchError(f"Failed retrieving patent details: {err}") from err
+            except InPassClientError as err:
+                logger.warning(
+                    "Failed retrieving PatentDetails for application '%s' during ingestion for run '%s': %s",
+                    app_num,
+                    run_id,
+                    err,
+                )
+
+        if not parsed_records and target_app_nums:
+            raise InPassIngestionSearchError(
+                f"Failed retrieving patent details for all requested applications ({target_app_nums})."
+            )
 
         # 4. Persist and link to run_id via PatentRepository
         canonical_patents: list[PatentRecord] = [r.to_patent_record() for r in parsed_records]

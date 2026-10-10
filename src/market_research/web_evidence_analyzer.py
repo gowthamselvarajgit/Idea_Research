@@ -297,11 +297,12 @@ def format_web_source_evidence(
 def format_web_sources_evidence(
     sources: Sequence[WebResearchSource],
     max_content_chars: int = 2500,
+    max_total_chars: int = 10000,
 ) -> list[str]:
     """Format a sequence of WebResearchSource objects preserving metadata for market research."""
     if not sources:
         return []
-    per_source_limit = min(max_content_chars, max(400, 20000 // len(sources)))
+    per_source_limit = min(max_content_chars, max(300, max_total_chars // len(sources)))
     return [format_web_source_evidence(s, max_content_chars=per_source_limit) for s in sources]
 
 
